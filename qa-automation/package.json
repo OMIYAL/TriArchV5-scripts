@@ -1,0 +1,26 @@
+{
+    "name": "triarch-qa-automation",
+    "version": "1.0.0",
+    "description": "QA Automation for TriArch V5",
+    "scripts": {
+        "test": "playwright test",
+        "test:headed": "playwright test --headed",
+        "test:smoke": "playwright test --grep @smoke",
+        "show-report": "playwright show-report",
+        "test:debug": "playwright test --debug"
+    },
+    "keywords": [
+        "playwright",
+        "automation",
+        "testing"
+    ],
+    "author": "",
+    "license": "ISC",
+    "devDependencies": {
+        "@playwright/test": "^1.40.0",
+        "@types/node": "^20.0.0"
+    },
+    "dependencies": {
+        "dotenv": "^16.6.1"
+    }
+}
