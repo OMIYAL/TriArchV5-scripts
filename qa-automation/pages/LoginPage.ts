@@ -56,12 +56,18 @@ export class LoginPage {
     await this.page.goto(this.baseUrl);
   }
 
-  /** Click the "Access Portal" CTA and wait for redirect to the auth server. */
+  /** Click the "Access Portal" CTA and wait for redirect — to auth server OR in-app dashboard. */
   async clickAccessPortal() {
     await this.accessPortalLink.waitFor({ state: 'visible', timeout: 15000 });
     await this.accessPortalLink.scrollIntoViewIfNeeded();
     await this.accessPortalLink.click({ force: true });
-    await this.page.waitForURL(/stg-auth\.triarch\.ai/, { timeout: 20000 });
+
+    // Wait for either the auth server redirect (unauthenticated)
+    // OR a URL change within stg-portal.triarch.ai (partially-auth storageState)
+    await this.page.waitForURL(
+      url => url.hostname.includes('stg-auth.triarch.ai') || url.pathname !== '/',
+      { timeout: 20000 }
+    );
   }
 
   /** Open the Switch Tenant modal, set the tenant name, and close the modal. */

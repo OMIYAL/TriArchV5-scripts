@@ -3,11 +3,14 @@
     "version": "1.0.0",
     "description": "QA Automation for TriArch V5",
     "scripts": {
+        "auth:setup": "playwright test --project=setup",
         "test": "playwright test",
         "test:headed": "playwright test --headed",
+        "test:dev": "playwright test --project=chromium --no-deps",
+        "test:dev:headed": "playwright test --project=chromium --no-deps --headed",
         "test:smoke": "playwright test --grep @smoke",
         "show-report": "playwright show-report",
-        "test:debug": "playwright test --debug"
+        "test:debug": "playwright test --debug --project=chromium --no-deps"
     },
     "keywords": [
         "playwright",
