@@ -17,7 +17,7 @@ import { LoginPage } from '../pages/LoginPage';
 export const AUTH_STATE_FILE = path.join(__dirname, '../playwright/.auth/auth-state.json');
 
 setup('authenticate – login once for all tests', async ({ page }) => {
-  setup.setTimeout(90000);
+  setup.setTimeout(120000); // 2 min — covers slow OAuth redirects (up to 60s for URL change)
 
   const tenantName  = process.env.TENANT_NAME   || '';
   const userName    = process.env.USER_NAME      || '';

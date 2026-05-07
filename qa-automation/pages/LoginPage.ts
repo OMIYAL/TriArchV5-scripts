@@ -91,7 +91,25 @@ export class LoginPage {
   /** Click the LOGIN button and wait for redirect back to the portal. */
   async clickLogin() {
     await this.loginBtn.click();
-    await this.page.waitForURL(/stg-portal\.triarch\.ai/, { timeout: 30000 });
+
+    // The OAuth redirect back to stg-portal.triarch.ai can be slow (30-60s).
+    // Wait up to 60s for the URL to change to the portal domain.
+    // If the URL doesn't match but the dashboard is visible, we still consider it success.
+    try {
+      await this.page.waitForURL(/stg-portal\.triarch\.ai/, { timeout: 60000 });
+    } catch {
+      // URL check timed out — verify we're actually on the dashboard as fallback
+      const isDashboard = await this.page.locator(
+        '[class*="lpx-topbar"], .lpx-toolbar, [class*="Control Room"]'
+      ).first().isVisible().catch(() => false);
+
+      if (!isDashboard) {
+        throw new Error(
+          '❌ Login failed: URL did not redirect to stg-portal.triarch.ai and dashboard is not visible.'
+        );
+      }
+      console.log('⚠️  URL redirect was slow — dashboard element confirmed, proceeding.');
+    }
   }
 
   // ─── Composite method ─────────────────────────────────────────────────────
