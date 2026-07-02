@@ -1,70 +1,98 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig } from '@playwright/test';
 import * as dotenv from 'dotenv';
 import path from 'path';
 
-dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 
-/**
- * Authenticated session file produced by fixtures/auth.setup.ts.
- * All browser projects reuse this — login runs only ONCE per test run.
- */
-const AUTH_STATE_FILE = path.join(__dirname, 'playwright/.auth/auth-state.json');
+// State file paths
+const PORTAL_AUTH_STATE = path.join(__dirname, 'playwright/.auth/portal-auth-state.json');
 
 export default defineConfig({
-  testDir: '.',                   // search from project root so fixtures/ is in scope
-  testIgnore: ['**/node_modules/**', '**/playwright-report/**', '**/test-results/**'],
-  fullyParallel: true,
+  testDir: '.',
+  testIgnore: [
+    '**/node_modules/**',
+    '**/playwright-report/**',
+    '**/test-results/**',
+    '**/utils/**',
+    '**/pages/**',
+    '**/fixtures/**',
+  ],
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: 1,
 
   reporter: [
-    ['html'],
+    ['html', { open: 'never' }],
     ['list'],
   ],
 
   use: {
-    baseURL: process.env.BASE_URL || 'https://stg-portal.triarch.ai/',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+
+    // ─── Viewport & Window Size ──────────────────────────────────
+    // viewport: null means Playwright will NOT impose a fixed virtual
+    // canvas — the viewport size matches the actual browser window.
+    // Combined with --start-maximized, the window fills your physical
+    // screen and the viewport matches it exactly (no stretching).
+    //
+    // DO NOT set a fixed pixel size here (e.g. 1920x1080) unless your
+    // screen is actually that resolution — it causes the page to render
+    // wider than the window and everything gets clipped on the right.
+    viewport: null,
+
+    launchOptions: {
+      args: ['--start-maximized'],
+    },
   },
 
   projects: [
-    // ── 1. SETUP PROJECT ────────────────────────────────────────────────────
-    // Runs auth.setup.ts once; saves session to playwright/.auth/auth-state.json
+    // ═══════════════════════════════════════════════════════════════
+    // PORTAL AUTH SETUP (For portal tests only)
+    // ═══════════════════════════════════════════════════════════════
     {
-      name: 'setup',
-      testMatch: /auth\.setup\.ts/,
+      name: 'portal-auth-setup',
+      testMatch: /portal.*auth\.setup\.ts/,
     },
 
-    // ── 2. BROWSER TEST PROJECTS ────────────────────────────────────────────
-    // Each depends on 'setup' and starts with the saved authenticated session.
+    // ═══════════════════════════════════════════════════════════════
+    // STOREFRONT TESTS (Citizen - No auth dependency)
+    // ═══════════════════════════════════════════════════════════════
     {
-      name: 'chromium',
-      testMatch: '**/tests/**/*.spec.ts',
+      name: 'storefront-chromium',
+      testMatch: '**/tests/storefront/**/*.spec.ts',
       use: {
-        ...devices['Desktop Chrome'],
-        storageState: AUTH_STATE_FILE,
+        viewport: null,
+        baseURL: process.env.STOREFRONT_BASE_URL,
       },
-      dependencies: ['setup'],
     },
+
+    // ═══════════════════════════════════════════════════════════════
+    // PORTAL TESTS (Admin/Reviewer - Uses saved auth)
+    // ═══════════════════════════════════════════════════════════════
     {
-      name: 'firefox',
-      testMatch: '**/tests/**/*.spec.ts',
+      name: 'portal-chromium',
+      testMatch: '**/tests/portal/**/*.spec.ts',
       use: {
-        ...devices['Desktop Firefox'],
-        storageState: AUTH_STATE_FILE,
+        viewport: null,
+        baseURL: process.env.PORTAL_BASE_URL,
+        storageState: PORTAL_AUTH_STATE,
       },
-      dependencies: ['setup'],
+      dependencies: ['portal-auth-setup'],
     },
+
+    // ═══════════════════════════════════════════════════════════════
+    // E2E FULL FLOW (Chains all modules)
+    // ═══════════════════════════════════════════════════════════════
     {
-      name: 'webkit',
-      testMatch: '**/tests/**/*.spec.ts',
+      name: 'e2e-full-flow',
+      testMatch: '**/tests/e2e/**/*.spec.ts',
       use: {
-        ...devices['Desktop Safari'],
-        storageState: AUTH_STATE_FILE,
+        viewport: null,
+        baseURL: process.env.STOREFRONT_BASE_URL,
       },
-      dependencies: ['setup'],
     },
   ],
 });
