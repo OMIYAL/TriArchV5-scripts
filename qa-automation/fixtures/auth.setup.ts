@@ -1,45 +1,44 @@
 import { test as setup, expect } from '@playwright/test';
 import path from 'path';
-import { LoginPage } from '../pages/LoginPage';
+import { AuthLoginPage } from '../pages/auth-login.page';
 
 /**
- * AUTH SETUP — runs ONCE before any browser test project.
- *
- * What it does:
- *   1. Launches a clean browser, runs the full login flow via LoginPage POM
- *   2. Saves the authenticated session (cookies + localStorage) to a JSON file
- *
- * All browser projects (chromium, firefox, webkit) read that file via
- * `storageState` in playwright.config.ts — so no test ever logs in again.
+ * PORTAL AUTH SETUP — runs ONCE for Portal tests only.
+ * Storefront tests do NOT use this.
  */
+export const AUTH_STATE_FILE = path.join(__dirname, '../playwright/.auth/portal-auth-state.json');
 
-// Where the authenticated browser state will be stored
-export const AUTH_STATE_FILE = path.join(__dirname, '../playwright/.auth/auth-state.json');
+setup('authenticate – portal login', async ({ page }) => {
+  setup.setTimeout(120000);
 
-setup('authenticate – login once for all tests', async ({ page }) => {
-  setup.setTimeout(120000); // 2 min — covers slow OAuth redirects (up to 60s for URL change)
-
-  const tenantName  = process.env.TENANT_NAME   || '';
-  const userName    = process.env.USER_NAME      || '';
+  const tenantName   = process.env.TENANT_NAME   || 'fps';
+  const userName     = process.env.USER_NAME      || '';
   const userPassword = process.env.USER_PASSWORD || '';
 
-  // Validate env vars are present before attempting login
-  if (!tenantName || !userName || !userPassword) {
+  if (!userName || !userPassword) {
     throw new Error(
-      '❌ Auth setup failed: TENANT_NAME, USER_NAME, and USER_PASSWORD must be set in .env'
+      '❌ Portal Auth setup failed: USER_NAME and USER_PASSWORD must be set in .env'
     );
   }
 
-  console.log(`\n🔐 Auth Setup: Logging in as "${userName}" on tenant "${tenantName}"...`);
+  console.log(`\n🔐 Portal Auth Setup: Logging in as "${userName}"...`);
 
-  const loginPage = new LoginPage(page);
-  await loginPage.login(tenantName, userName, userPassword);
+  // Navigate to Portal login
+  const portalBaseUrl = process.env.PORTAL_BASE_URL || 'https://stg-portal.triarch.ai/';
+  await page.goto(portalBaseUrl);
+  
+  // Wait for redirect to auth
+  await page.waitForURL(/auth.*Login/, { timeout: 30000 });
+  
+  const authBaseUrl = process.env.AUTH_BASE_URL || 'https://stg-auth.triarch.ai';
+  const loginPage = new AuthLoginPage(page, authBaseUrl);
+  await loginPage.completeLoginFlow(tenantName, userName, userPassword);
 
-  // Verify we are actually on the authenticated portal before saving
+  // Verify we are on Portal
   await expect(page).toHaveURL(/stg-portal\.triarch\.ai/, { timeout: 10000 });
 
-  // Save cookies + localStorage so all tests can reuse this session
+  // Save Portal auth state
   await page.context().storageState({ path: AUTH_STATE_FILE });
 
-  console.log(`✅ Auth state saved → ${AUTH_STATE_FILE}`);
+  console.log(`✅ Portal auth state saved → ${AUTH_STATE_FILE}`);
 });

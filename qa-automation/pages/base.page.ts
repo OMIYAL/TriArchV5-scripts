@@ -1,0 +1,48 @@
+import { Page, Locator } from '@playwright/test';
+
+export class BasePage {
+  protected page: Page;
+  protected baseUrl: string;
+
+  constructor(page: Page, baseUrl: string) {
+    this.page = page;
+    this.baseUrl = baseUrl;
+  }
+
+  async goto(path: string = '', queryParams?: Record<string, string>): Promise<void> {
+    let url = `${this.baseUrl}${path}`;
+    if (queryParams) {
+      const params = new URLSearchParams(queryParams).toString();
+      url += `?${params}`;
+    }
+    await this.page.goto(url);
+  }
+
+  async waitForNetworkIdle(): Promise<void> {
+    await this.page.waitForLoadState('networkidle');
+  }
+
+  async waitForUrl(pattern: string | RegExp, timeout: number = 30000): Promise<void> {
+    await this.page.waitForURL(pattern, { timeout });
+  }
+
+  getCurrentUrl(): string {
+    return this.page.url();
+  }
+
+  protected async click(locator: Locator, timeout: number = 10000): Promise<void> {
+    await locator.waitFor({ state: 'visible', timeout });
+    await locator.click();
+  }
+
+  protected async fill(locator: Locator, value: string, timeout: number = 10000): Promise<void> {
+    await locator.waitFor({ state: 'visible', timeout });
+    await locator.clear();
+    await locator.fill(value);
+  }
+
+  protected async selectOption(locator: Locator, value: string): Promise<void> {
+    await locator.waitFor({ state: 'visible' });
+    await locator.selectOption(value);
+  }
+}
