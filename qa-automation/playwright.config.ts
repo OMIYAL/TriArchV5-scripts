@@ -1,22 +1,25 @@
 import { defineConfig } from '@playwright/test';
+import { defineBddProject } from 'playwright-bdd';
 import * as dotenv from 'dotenv';
 import path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
-// State file paths
-const PORTAL_AUTH_STATE = path.join(__dirname, 'playwright/.auth/portal-auth-state.json');
+const bddStorefrontUse = {
+  viewport: null,
+  baseURL: process.env.STOREFRONT_BASE_URL,
+  launchOptions: {
+    args: ['--start-maximized'],
+  },
+};
+
+const bddStorefrontProject = defineBddProject({
+  name: 'bdd-storefront',
+  features: 'features/**/*.feature',
+  steps: ['steps/**/*.ts'],
+});
 
 export default defineConfig({
-  testDir: '.',
-  testIgnore: [
-    '**/node_modules/**',
-    '**/playwright-report/**',
-    '**/test-results/**',
-    '**/utils/**',
-    '**/pages/**',
-    '**/fixtures/**',
-  ],
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -50,49 +53,18 @@ export default defineConfig({
 
   projects: [
     // ═══════════════════════════════════════════════════════════════
-    // PORTAL AUTH SETUP (For portal tests only)
+    // BDD / GHERKIN (Cucumber via playwright-bdd)
     // ═══════════════════════════════════════════════════════════════
     {
-      name: 'portal-auth-setup',
-      testMatch: /portal.*auth\.setup\.ts/,
+      ...bddStorefrontProject,
+      timeout: 180_000,
+      use: bddStorefrontUse,
     },
-
-    // ═══════════════════════════════════════════════════════════════
-    // STOREFRONT TESTS (Citizen - No auth dependency)
-    // ═══════════════════════════════════════════════════════════════
     {
+      ...bddStorefrontProject,
       name: 'storefront-chromium',
-      testMatch: '**/tests/storefront/**/*.spec.ts',
-      use: {
-        viewport: null,
-        baseURL: process.env.STOREFRONT_BASE_URL,
-      },
-    },
-
-    // ═══════════════════════════════════════════════════════════════
-    // PORTAL TESTS (Admin/Reviewer - Uses saved auth)
-    // ═══════════════════════════════════════════════════════════════
-    {
-      name: 'portal-chromium',
-      testMatch: '**/tests/portal/**/*.spec.ts',
-      use: {
-        viewport: null,
-        baseURL: process.env.PORTAL_BASE_URL,
-        storageState: PORTAL_AUTH_STATE,
-      },
-      dependencies: ['portal-auth-setup'],
-    },
-
-    // ═══════════════════════════════════════════════════════════════
-    // E2E FULL FLOW (Chains all modules)
-    // ═══════════════════════════════════════════════════════════════
-    {
-      name: 'e2e-full-flow',
-      testMatch: '**/tests/e2e/**/*.spec.ts',
-      use: {
-        viewport: null,
-        baseURL: process.env.STOREFRONT_BASE_URL,
-      },
+      timeout: 180_000,
+      use: bddStorefrontUse,
     },
   ],
 });

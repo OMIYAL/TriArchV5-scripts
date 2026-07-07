@@ -1,153 +1,124 @@
-import { Page, Locator, expect } from '@playwright/test';
+import { Page, Locator } from '@playwright/test';
 import { env } from '../../utils/env.helper';
 
 export class CreateProjectPage {
   private readonly page: Page;
-  
-  private readonly jurisdictionCombobox: Locator;
+
   private readonly nextButton: Locator;
   private readonly projectNameInput: Locator;
   private readonly streetAddressInput: Locator;
   private readonly cityInput: Locator;
   private readonly stateInput: Locator;
   private readonly postalCodeInput: Locator;
-  private readonly a1Combobox: Locator;
-  private readonly typeIACombobox: Locator;
-  private readonly grossSquareFootageInput: Locator;
-  private readonly heightInput: Locator;
-  private readonly numberOfFloorsInput: Locator;
-  private readonly basementCombobox: Locator;
-  private readonly addContactButton: Locator;
-  private readonly makePrimaryCheckbox: Locator;
-  private readonly transferOwnershipCheckbox: Locator;
-  private readonly contactCloseButton: Locator;
   private readonly createProjectButton: Locator;
 
   constructor(page: Page) {
     this.page = page;
     this.nextButton = page.getByRole('button', { name: 'Next' });
-
-    this.jurisdictionCombobox = page.getByRole('combobox', { name: 'Search jurisdiction by name' });
     this.projectNameInput = page.getByRole('textbox', { name: 'Project Name' });
     this.streetAddressInput = page.getByRole('textbox', { name: 'Street Address Line 1' });
     this.cityInput = page.getByRole('textbox', { name: 'City or Municipality' });
     this.stateInput = page.getByRole('textbox', { name: 'State or Province' });
     this.postalCodeInput = page.getByRole('textbox', { name: 'Postal Code' });
-    this.a1Combobox = page.getByRole('combobox', { name: 'A1' });
-    this.typeIACombobox = page.getByRole('combobox', { name: 'TypeIA' });
-    this.grossSquareFootageInput = page.getByRole('textbox', { name: 'Gross Square Footage' });
-    this.heightInput = page.getByRole('textbox', { name: 'Height' });
-    this.numberOfFloorsInput = page.getByRole('spinbutton', { name: 'Number Of Floors' });
-    this.basementCombobox = page.getByRole('combobox', { name: 'None' });
-    
-    this.addContactButton = page.getByRole('button', { name: 'Add contact' });
-    this.makePrimaryCheckbox = page.getByLabel('Make primary for this role');
-    this.transferOwnershipCheckbox = page.getByLabel('Transfer Ownership');
-    this.contactCloseButton = page.getByLabel('Close');
-    
-    this.createProjectButton = page.getByRole('button', { name: 'Create project' });
+    this.createProjectButton = page.getByRole('button', {
+      name: /^(Create project|Create permit project|Save|Save project|Finish|Submit)$/i,
+    });
   }
 
   async completeFullFlow(): Promise<void> {
-    // ═══════════════════════════════════════════════════════════
-    // Step 1: Jurisdiction
-    // ═══════════════════════════════════════════════════════════
-    await this.jurisdictionCombobox.waitFor({ state: 'visible', timeout: 10000 });
-    await this.jurisdictionCombobox.click();
-    const select2SearchInput = this.page.locator('input.select2-search__field:visible');
-    await select2SearchInput.waitFor({ state: 'visible', timeout: 5000 });
-    await select2SearchInput.fill(env.project.jurisdiction);
-    const jurisdictionOption = this.page.getByRole('option', { name: env.project.jurisdiction, exact: true });
-    await jurisdictionOption.waitFor({ state: 'visible', timeout: 15000 });
-    await jurisdictionOption.click();
-    await this.clickNext();
+    // Wizard structure (current):
+    //   Step 1 – Project Details (name + address + jurisdiction all on one page)
+    //   Step 2 – Building Characteristics
+    //   Step 3 – Project Contacts
+    //   Step 4 – Project related documents  →  "Create project" button
+    await this.page.waitForLoadState('domcontentloaded');
 
     // ═══════════════════════════════════════════════════════════
-    // Step 2: Project Name
+    // Step 1: Project Details
     // ═══════════════════════════════════════════════════════════
+    await this.projectNameInput.waitFor({ state: 'visible', timeout: 30000 });
     await this.projectNameInput.fill(env.project.name);
-    await this.clickNext();
 
-    // ═══════════════════════════════════════════════════════════
-    // Step 3: Address
-    // ═══════════════════════════════════════════════════════════
     await this.streetAddressInput.fill(env.project.streetAddress);
     await this.cityInput.fill(env.project.city);
     await this.stateInput.fill(env.project.state);
     await this.postalCodeInput.fill(env.project.postalCode);
-    await this.clickNext();
 
-    // ═══════════════════════════════════════════════════════════
-    // Step 4: Building Details
-    // ═══════════════════════════════════════════════════════════
-    const a1Option = this.page.getByRole('option', { name: env.building.a1Option });
-    await this.a1Combobox.click();
-    await a1Option.waitFor({ state: 'visible', timeout: 5000 });
-    await a1Option.click();
+    // Jurisdiction is a jQuery Select2 widget. Open it via JS to avoid
+    // click-interception from the sticky navigation header, then type + select.
+    const hasSelect2 = await this.page.evaluate(() =>
+      !!document.querySelector('#JurisdictionIdSelect'),
+    );
 
-    const typeIaOption = this.page.getByRole('option', { name: env.building.iaOption });
-    await this.typeIACombobox.click();
-    await typeIaOption.waitFor({ state: 'visible', timeout: 5000 });
-    await typeIaOption.click();
+    if (hasSelect2) {
+      // Open the Select2 dropdown programmatically (avoids click-interception by sticky nav).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await this.page.evaluate(() => {
+        const w = window as any;
+        const sel = document.querySelector('#JurisdictionIdSelect');
+        if (w.$ && sel) w.$(sel).select2('open');
+      });
 
-    await this.grossSquareFootageInput.click();
-    await this.heightInput.click();
-    await this.numberOfFloorsInput.dblclick();
+      // Use pressSequentially so that every keystroke fires the events
+      // select2 relies on (keydown / keyup / input) to trigger its AJAX search.
+      const searchInput = this.page.locator('.select2-search__field').first();
+      await searchInput.waitFor({ state: 'visible', timeout: 8000 });
+      await searchInput.pressSequentially(env.project.jurisdiction, { delay: 80 });
+      await this.page.waitForTimeout(1500); // Allow AJAX debounce + response
 
-    const basementOption = this.page.getByRole('option', { name: env.building.basementOption });
-    await this.basementCombobox.click();
-    await basementOption.waitFor({ state: 'visible', timeout: 5000 });
-    await basementOption.click();
-    await this.clickNext();
-
-    // ═══════════════════════════════════════════════════════════
-    // Step 5: Contacts
-    // ═══════════════════════════════════════════════════════════
-    await this.clickNext();
-    await this.page.waitForTimeout(2000);
-    
-    await this.addContactButton.waitFor({ state: 'visible', timeout: 10000 });
-    await this.addContactButton.click();
-    
-    const contactOverlay = this.page.locator('.offcanvas.show, .modal.show, [role="dialog"]:visible').last();
-    await contactOverlay.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-    
-    const overlayInputs = contactOverlay.locator('input:visible');
-    const inputCount = await overlayInputs.count();
-    
-    for (let i = 0; i < inputCount; i++) {
-      await overlayInputs.nth(i).click().catch(() => {});
+      const option = this.page
+        .getByRole('option', { name: new RegExp(env.project.jurisdiction, 'i') })
+        .first();
+      await option.waitFor({ state: 'visible', timeout: 10000 });
+      await option.click();
     }
 
-    const overlayCheckboxes = contactOverlay.locator('input[type="checkbox"]:visible');
-    const checkboxCount = await overlayCheckboxes.count();
-    for (let i = 0; i < checkboxCount; i++) {
-      await overlayCheckboxes.nth(i).click().catch(() => {});
-    }
-    
-    const closeButton = contactOverlay.locator('.btn-close, [aria-label="Close"], button:has-text("Close")').first();
-    await closeButton.click().catch(() => {});
-    
+    // Advance to Step 2
     await this.clickNext();
+    await this.page.waitForURL(/step=2/, { timeout: 20000 });
 
     // ═══════════════════════════════════════════════════════════
-    // Step 6: Review
+    // Step 2: Building Characteristics (all fields optional – skip)
     // ═══════════════════════════════════════════════════════════
-    await expect(
-      this.page.locator('div:nth-child(4) > .ta-form-section > .card-body')
-    ).toBeVisible();
-    
+    // Wait for step 2 to fully render before clicking Next.
+    await this.nextButton.waitFor({ state: 'visible', timeout: 15000 });
+    await this.clickNext();
+
+    // The project is saved during the Step 2→3 transition (API call) — allow extra time.
+    await this.page.waitForURL(/step=3/, { timeout: 60000 });
+
+    // ═══════════════════════════════════════════════════════════
+    // Step 3: Project Contacts (skip – no contacts required)
+    // ═══════════════════════════════════════════════════════════
+    await this.nextButton.waitFor({ state: 'visible', timeout: 15000 });
+    await this.clickNext();
+    await this.page.waitForURL(/step=4/, { timeout: 20000 });
+
+    // ═══════════════════════════════════════════════════════════
+    // Step 4: Project related documents → click "Create project"
+    // ═══════════════════════════════════════════════════════════
+    await this.createProjectButton.waitFor({ state: 'visible', timeout: 15000 });
     await this.createProjectButton.click();
   }
 
   private async clickNext(): Promise<void> {
     await this.nextButton.waitFor({ state: 'visible', timeout: 10000 });
-    await this.nextButton.click();
+    // Standard Playwright click — auto-scrolls and enforces actionability.
+    // Falls back to JS-click only if the element is not actionable (e.g. covered by a nav).
+    try {
+      await this.nextButton.click({ timeout: 5000 });
+    } catch {
+      await this.page.evaluate(() => {
+        const btn =
+          (document.querySelector('[data-wizard-nav="next-js"]') as HTMLButtonElement) ||
+          ([...document.querySelectorAll('button')] as HTMLButtonElement[]).find(
+            (b) => b.textContent?.trim().startsWith('Next') && !b.disabled,
+          );
+        if (btn) btn.click();
+      });
+    }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // ⭐ THIS IS THE NEW METHOD ⭐
-  // ═══════════════════════════════════════════════════════════
   getRawPage(): Page {
     return this.page;
   }

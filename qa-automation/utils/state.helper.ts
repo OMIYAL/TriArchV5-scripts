@@ -20,6 +20,7 @@ function ensureStateDir(): void {
  */
 export interface CitizenSRState {
   serviceRequestId: string;
+  trackingNumber?: string;
   projectId: string;
   projectName: string;
   serviceName: string;
