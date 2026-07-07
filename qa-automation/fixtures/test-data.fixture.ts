@@ -96,11 +96,11 @@ export function getDefaultTestData(): TestData {
     },
     stripe: {
       email: env.stripe.email,
-      cardNumber: env.stripe.cardNumber,
-      expiration: env.stripe.expiration,
-      cvc: env.stripe.cvc,
-      cardholderName: env.stripe.cardholderName,
-      zip: env.stripe.zip,
+      cardNumber: (process.env.STRIPE_TEST_CARD_NUMBER || ''),
+      expiration: (process.env.STRIPE_TEST_EXPIRATION || ''),
+      cvc: (process.env.STRIPE_TEST_CVC || ''),
+      cardholderName: (process.env.STRIPE_TEST_CARDHOLDER_NAME || ''),
+      zip: (process.env.STRIPE_TEST_ZIP || ''),
     },
   };
 }

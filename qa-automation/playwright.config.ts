@@ -1,14 +1,20 @@
 import { defineConfig } from '@playwright/test';
+import { defineBddConfig } from 'playwright-bdd';
 import * as dotenv from 'dotenv';
 import path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
+const testDir = defineBddConfig({
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.ts',
+});
+
 // State file paths
 const PORTAL_AUTH_STATE = path.join(__dirname, 'playwright/.auth/portal-auth-state.json');
 
 export default defineConfig({
-  testDir: '.',
+  testDir,
   testIgnore: [
     '**/node_modules/**',
     '**/playwright-report/**',
@@ -17,6 +23,7 @@ export default defineConfig({
     '**/pages/**',
     '**/fixtures/**',
   ],
+  timeout: 300000,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -28,6 +35,7 @@ export default defineConfig({
   ],
 
   use: {
+    actionTimeout: 15000,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -54,7 +62,10 @@ export default defineConfig({
     // ═══════════════════════════════════════════════════════════════
     {
       name: 'portal-auth-setup',
-      testMatch: /portal.*auth\.setup\.ts/,
+      testMatch: '**/tests/setup/**/*.setup.ts',
+      use: {
+        headless: true, // auth setup runs invisibly — no browser window shown
+      },
     },
 
     // ═══════════════════════════════════════════════════════════════
@@ -62,7 +73,7 @@ export default defineConfig({
     // ═══════════════════════════════════════════════════════════════
     {
       name: 'storefront-chromium',
-      testMatch: '**/tests/storefront/**/*.spec.ts',
+      testMatch: ['**/tests/storefront/**/*.spec.ts', '**/features/storefront/**/*.feature.spec.js'],
       use: {
         viewport: null,
         baseURL: process.env.STOREFRONT_BASE_URL,
@@ -88,7 +99,7 @@ export default defineConfig({
     // ═══════════════════════════════════════════════════════════════
     {
       name: 'e2e-full-flow',
-      testMatch: '**/tests/e2e/**/*.spec.ts',
+      testMatch: ['**/tests/e2e/**/*.spec.ts', '**/features/e2e/**/*.feature.spec.js'],
       use: {
         viewport: null,
         baseURL: process.env.STOREFRONT_BASE_URL,

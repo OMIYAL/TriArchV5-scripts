@@ -1,6 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { BasePage } from './base.page';
-import { env } from '../utils/env.helper';
 
 export class AuthLoginPage extends BasePage {
   private readonly switchLink: Locator;
@@ -11,7 +10,7 @@ export class AuthLoginPage extends BasePage {
   private readonly loginButton: Locator;
 
   constructor(page: Page) {
-    super(page, env.urls.auth);
+    super(page, (process.env.AUTH_BASE_URL || ''));
     
     this.switchLink = page.getByRole('link', { name: 'switch' });
     this.tenantNameInput = page.getByRole('textbox', { name: 'Name', exact: true });
@@ -78,9 +77,16 @@ export class AuthLoginPage extends BasePage {
     username: string,
     password: string
   ): Promise<void> {
-    // Only switch tenant if the link is actually visible on the page
-    if (await this.switchLink.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await this.switchTenant(tenantName);
+    // Check if the tenant is already set to the target tenant to avoid redundant modals and timeouts
+    const tenantLabel = this.page.locator('strong');
+    const currentTenant = await tenantLabel.first().textContent().catch(() => '');
+    
+    if (currentTenant?.trim().toLowerCase() !== tenantName.toLowerCase()) {
+      if (await this.switchLink.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await this.switchTenant(tenantName);
+      }
+    } else {
+      console.log(`✅ Tenant is already set to "${tenantName}". Skipping switch.`);
     }
     
     await this.login(username, password);
