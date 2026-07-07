@@ -1,12 +1,11 @@
 import { Page, Locator } from '@playwright/test';
 import { BasePage } from '../base.page';
-import { env } from '../../utils/env.helper';
 
 export class ServicesListingPage extends BasePage {
   private readonly moreServicesRegion: Locator;
 
   constructor(page: Page) {
-    super(page, env.urls.storefront);
+    super(page, (process.env.STOREFRONT_BASE_URL || ''));
     this.moreServicesRegion = page.getByRole('region', { name: 'More services' });
   }
 
@@ -84,5 +83,39 @@ export class ServicesListingPage extends BasePage {
     await this.click(selectedService);
     
     return targetHref;
+  }
+
+  /**
+   * Navigates to a specific service by name.
+   */
+  async navigateToService(serviceName: string): Promise<string> {
+    await this.expandMoreServicesIfNeeded();
+    await this.page.waitForTimeout(1000);
+
+    const serviceLink = this.page.getByRole('link', { name: serviceName, exact: false });
+    if (await serviceLink.isVisible({ timeout: 5000 }).catch(() => false)) {
+      const targetHref = await serviceLink.getAttribute('href') || '';
+      await this.click(serviceLink);
+      return targetHref;
+    }
+
+    // Search pagination if not found on the first page
+    const pageButtons = this.page.locator('button:has-text("Page")');
+    const totalPages = await pageButtons.count();
+    
+    for (let i = 1; i <= totalPages; i++) {
+      await this.page.getByRole('button', { name: `Page ${i}` }).click();
+      await this.page.waitForLoadState('domcontentloaded');
+      await this.page.waitForTimeout(1000);
+
+      const link = this.page.getByRole('link', { name: serviceName, exact: false });
+      if (await link.isVisible({ timeout: 5000 }).catch(() => false)) {
+        const targetHref = await link.getAttribute('href') || '';
+        await this.click(link);
+        return targetHref;
+      }
+    }
+
+    throw new Error(`❌ Service "${serviceName}" not found on any page`);
   }
 }

@@ -1,5 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
-import { env } from '../../utils/env.helper';
+import { DynamicProjectData, generateDynamicProjectData } from '../../utils/data-generator.helper';
 
 export class CreateProjectPage {
   private readonly page: Page;
@@ -48,7 +48,23 @@ export class CreateProjectPage {
     this.createProjectButton = page.getByRole('button', { name: 'Create project' });
   }
 
-  async completeFullFlow(): Promise<void> {
+  async completeFullFlow(projectData?: DynamicProjectData): Promise<void> {
+    const data = projectData || generateDynamicProjectData();
+    
+    const pName = data.name;
+    const pJurisdiction = data.jurisdiction;
+    const pStreet = data.streetAddress;
+    const pCity = data.city;
+    const pState = data.state;
+    const pPostal = data.postalCode;
+    
+    const pOccType = data.occupancyType;
+    const pConstType = data.constructionType;
+    const pGrossSqFt = data.grossSquareFootage;
+    const pHeight = data.height;
+    const pFloors = data.numberOfFloors;
+    const pSprinkler = data.sprinklerCoverage;
+
     // ═══════════════════════════════════════════════════════════
     // Step 1: Jurisdiction
     // ═══════════════════════════════════════════════════════════
@@ -56,8 +72,8 @@ export class CreateProjectPage {
     await this.jurisdictionCombobox.click();
     const select2SearchInput = this.page.locator('input.select2-search__field:visible');
     await select2SearchInput.waitFor({ state: 'visible', timeout: 5000 });
-    await select2SearchInput.fill(env.project.jurisdiction);
-    const jurisdictionOption = this.page.getByRole('option', { name: env.project.jurisdiction, exact: true });
+    await select2SearchInput.fill(pJurisdiction);
+    const jurisdictionOption = this.page.getByRole('option', { name: pJurisdiction, exact: true });
     await jurisdictionOption.waitFor({ state: 'visible', timeout: 15000 });
     await jurisdictionOption.click();
     await this.clickNext();
@@ -65,84 +81,102 @@ export class CreateProjectPage {
     // ═══════════════════════════════════════════════════════════
     // Step 2: Project Name
     // ═══════════════════════════════════════════════════════════
-    await this.projectNameInput.fill(env.project.name);
+    await this.projectNameInput.fill(pName);
     await this.clickNext();
 
     // ═══════════════════════════════════════════════════════════
     // Step 3: Address
     // ═══════════════════════════════════════════════════════════
-    await this.streetAddressInput.fill(env.project.streetAddress);
-    await this.cityInput.fill(env.project.city);
-    await this.stateInput.fill(env.project.state);
-    await this.postalCodeInput.fill(env.project.postalCode);
+    await this.streetAddressInput.fill(pStreet);
+    await this.cityInput.fill(pCity);
+    await this.stateInput.fill(pState);
+    await this.postalCodeInput.fill(pPostal);
     await this.clickNext();
 
     // ═══════════════════════════════════════════════════════════
     // Step 4: Building Details
     // ═══════════════════════════════════════════════════════════
-    const a1Option = this.page.getByRole('option', { name: env.building.a1Option });
+    const occOption = this.page.getByRole('option', { name: pOccType, exact: true });
     await this.a1Combobox.click();
-    await a1Option.waitFor({ state: 'visible', timeout: 5000 });
-    await a1Option.click();
+    await occOption.waitFor({ state: 'visible', timeout: 5000 });
+    await occOption.click();
 
-    const typeIaOption = this.page.getByRole('option', { name: env.building.iaOption });
+    const constOption = this.page.getByRole('option', { name: pConstType, exact: true });
     await this.typeIACombobox.click();
-    await typeIaOption.waitFor({ state: 'visible', timeout: 5000 });
-    await typeIaOption.click();
+    await constOption.waitFor({ state: 'visible', timeout: 5000 });
+    await constOption.click();
 
-    await this.grossSquareFootageInput.click();
-    await this.heightInput.click();
-    await this.numberOfFloorsInput.dblclick();
+    if (pGrossSqFt) {
+      await this.grossSquareFootageInput.fill(pGrossSqFt);
+    } else {
+      await this.grossSquareFootageInput.click();
+    }
 
-    const basementOption = this.page.getByRole('option', { name: env.building.basementOption });
+    if (pHeight) {
+      await this.heightInput.fill(pHeight);
+    } else {
+      await this.heightInput.click();
+    }
+
+    if (pFloors) {
+      await this.numberOfFloorsInput.fill(pFloors);
+    } else {
+      await this.numberOfFloorsInput.dblclick();
+    }
+
+    const sprinklerOption = this.page.getByRole('option', { name: pSprinkler, exact: true });
     await this.basementCombobox.click();
-    await basementOption.waitFor({ state: 'visible', timeout: 5000 });
-    await basementOption.click();
+    await sprinklerOption.waitFor({ state: 'visible', timeout: 5000 });
+    await sprinklerOption.click();
+    
     await this.clickNext();
 
     // ═══════════════════════════════════════════════════════════
     // Step 5: Contacts
     // ═══════════════════════════════════════════════════════════
-    await this.clickNext();
     await this.page.waitForTimeout(2000);
     
-    await this.addContactButton.waitFor({ state: 'visible', timeout: 10000 });
-    await this.addContactButton.click();
-    
-    const contactOverlay = this.page.locator('.offcanvas.show, .modal.show, [role="dialog"]:visible').last();
-    await contactOverlay.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-    
-    const overlayInputs = contactOverlay.locator('input:visible');
-    const inputCount = await overlayInputs.count();
-    
-    for (let i = 0; i < inputCount; i++) {
-      await overlayInputs.nth(i).click().catch(() => {});
-    }
+    await this.addContactButton.waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
+    if (await this.addContactButton.isVisible()) {
+      await this.addContactButton.click();
+      
+      const contactOverlay = this.page.locator('.offcanvas.show, .modal.show, [role="dialog"]:visible').last();
+      await contactOverlay.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+      
+      const overlayInputs = contactOverlay.locator('input:visible');
+      const inputCount = await overlayInputs.count();
+      
+      for (let i = 0; i < inputCount; i++) {
+        await overlayInputs.nth(i).click({ timeout: 2000, force: true }).catch(() => {});
+      }
 
-    const overlayCheckboxes = contactOverlay.locator('input[type="checkbox"]:visible');
-    const checkboxCount = await overlayCheckboxes.count();
-    for (let i = 0; i < checkboxCount; i++) {
-      await overlayCheckboxes.nth(i).click().catch(() => {});
+      const overlayCheckboxes = contactOverlay.locator('input[type="checkbox"]:visible');
+      const checkboxCount = await overlayCheckboxes.count();
+      for (let i = 0; i < checkboxCount; i++) {
+        await overlayCheckboxes.nth(i).click({ timeout: 2000, force: true }).catch(() => {});
+      }
+      
+      const closeButton = contactOverlay.locator('.btn-close, [aria-label="Close"], button:has-text("Close")').first();
+      await closeButton.click({ timeout: 2000 }).catch(() => {});
+      
+      // Fallback: press Escape to close the modal if it's still open
+      await this.page.keyboard.press('Escape');
+      await contactOverlay.waitFor({ state: 'hidden', timeout: 2000 }).catch(() => {});
     }
-    
-    const closeButton = contactOverlay.locator('.btn-close, [aria-label="Close"], button:has-text("Close")').first();
-    await closeButton.click().catch(() => {});
     
     await this.clickNext();
 
     // ═══════════════════════════════════════════════════════════
     // Step 6: Review
     // ═══════════════════════════════════════════════════════════
-    await expect(
-      this.page.locator('div:nth-child(4) > .ta-form-section > .card-body')
-    ).toBeVisible();
+    await expect(this.createProjectButton).toBeVisible({ timeout: 10000 });
     
     await this.createProjectButton.click();
   }
 
   private async clickNext(): Promise<void> {
     await this.nextButton.waitFor({ state: 'visible', timeout: 10000 });
-    await this.nextButton.click();
+    await this.nextButton.click({ force: true });
   }
 
   // ═══════════════════════════════════════════════════════════

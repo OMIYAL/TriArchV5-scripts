@@ -1,7 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { BasePage } from '../base.page';
 import { CreateProjectPage } from './create-project.page';
-import { env } from '../../utils/env.helper';
 
 /**
  * Service Apply Page Object - Handles service application flow
@@ -12,16 +11,16 @@ export class ServiceApplyPage extends BasePage {
   private readonly payIntakeFeeButton: Locator;
 
   constructor(page: Page) {
-    super(page, env.urls.storefront);
+    super(page, (process.env.STOREFRONT_BASE_URL || ''));
     
     this.projectCombobox = page.getByRole('combobox', { name: 'No project — enter' });
     this.createNewProjectLink = page.getByRole('link', { name: 'Create a new project — opens' });
-    this.payIntakeFeeButton = page.getByRole('button', { name: 'Pay intake fee' });
+    this.payIntakeFeeButton = page.locator('#PayIntakeFeeButton');
   }
 
   async navigate(serviceDefinitionId: string): Promise<void> {
     await this.goto('/services/Apply', { serviceDefinitionId });
-    await this.waitForNetworkIdle();
+    await this.projectCombobox.waitFor({ state: 'visible', timeout: 15000 });
   }
 
   async openCreateProjectPopup(): Promise<CreateProjectPage> {
@@ -47,11 +46,13 @@ export class ServiceApplyPage extends BasePage {
    * Selects the project we just created in the main page dropdown
    */
   async selectCreatedProject(projectName: string): Promise<void> {
-    // Wait for the dropdown to refresh with the newly created project
-    await this.page.waitForTimeout(2000);
+    // Reload the page because the frontend doesn't auto-fetch newly created projects
+    await this.page.reload({ waitUntil: 'domcontentloaded' });
+    await this.page.waitForTimeout(2000); // Give it a moment to fully initialize
     
     // The dropdown label changes after creation, so we target it generally by role
     const projectDropdown = this.page.locator('[role="combobox"]').first();
+    await projectDropdown.waitFor({ state: 'visible', timeout: 15000 });
     await projectDropdown.click();
     
     // ⭐ FIX: Use .first() to safely handle multiple projects with the same name from previous test runs

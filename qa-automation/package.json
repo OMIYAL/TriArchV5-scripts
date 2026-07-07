@@ -4,7 +4,9 @@
     "description": "QA Automation for TriArch V5",
     "scripts": {
         "auth:setup": "playwright test --project=setup",
+        "bdd:generate": "bddgen",
         "test": "playwright test",
+        "test:bdd": "bddgen && playwright test",
         "test:headed": "playwright test --headed",
         "test:dev": "playwright test --project=chromium --no-deps",
         "test:dev:headed": "playwright test --project=chromium --no-deps --headed",
@@ -14,14 +16,20 @@
     },
     "keywords": [
         "playwright",
+        "cucumber",
+        "gherkin",
+        "bdd",
         "automation",
         "testing"
     ],
     "author": "",
     "license": "ISC",
     "devDependencies": {
+        "@cucumber/cucumber": "^10.0.0",
+        "@faker-js/faker": "^10.5.0",
         "@playwright/test": "^1.40.0",
-        "@types/node": "^20.0.0"
+        "@types/node": "^20.0.0",
+        "playwright-bdd": "^7.0.0"
     },
     "dependencies": {
         "dotenv": "^16.6.1"
