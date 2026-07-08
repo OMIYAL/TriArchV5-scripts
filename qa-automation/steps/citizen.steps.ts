@@ -212,6 +212,7 @@ async function fixApplyUrlInPlace(page: import('@playwright/test').Page, destina
 }
 
 async function waitForSaveDraftToSettle(page: import('@playwright/test').Page): Promise<boolean> {
+  if (page.isClosed()) return false;
   return page
     .waitForURL(
       (u) => {
@@ -256,6 +257,7 @@ async function clickNextAndAdvance(
   nextButton: import('@playwright/test').Locator,
   stepFingerprint: string,
 ): Promise<void> {
+  if (page.isClosed()) return;
   await nextButton.scrollIntoViewIfNeeded();
   await nextButton.click({ force: true });
 
@@ -276,12 +278,13 @@ async function clickNextAndAdvance(
   ).catch(() => {});
 
   await waitForSaveDraftToSettle(page);
-  if (/handler=SaveDraft/i.test(page.url())) {
+  if (!page.isClosed() && /handler=SaveDraft/i.test(page.url())) {
     await returnToApplyPageIfNeeded(page);
   }
 }
 
 async function returnToApplyPageIfNeeded(page: import('@playwright/test').Page): Promise<void> {
+  if (page.isClosed()) return;
   await assertApplyPageAccessible(page);
 
   const url = page.url();
@@ -306,9 +309,21 @@ async function returnToApplyPageIfNeeded(page: import('@playwright/test').Page):
       return;
     }
 
+    // Important: avoid a full reload (page.goto) when we're already on the Apply page.
+    // A reload can reset the multi-step wizard back to step 1, causing loops after checklist.
     if (await isApplyFormInteractive(page)) {
       console.log(`Apply form still interactive — restoring URL without reload.`);
       await fixApplyUrlInPlace(page, destination);
+      await waitForSaveDraftToSettle(page);
+      return;
+    }
+
+    // Even if the UI isn't interactive yet, prefer in-place URL restoration first to
+    // preserve step state; only fall back to navigation if we still can't recover.
+    console.log(`Apply form not interactive — restoring URL without reload (best effort).`);
+    await fixApplyUrlInPlace(page, destination);
+    if (await waitForSaveDraftToSettle(page)) {
+      lastApplyUrl = page.url();
       return;
     }
   }
@@ -319,8 +334,10 @@ async function returnToApplyPageIfNeeded(page: import('@playwright/test').Page):
 
   console.log(`Recovering apply page (was: ${url}) -> ${destination}`);
   await page.goto(destination, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  if (page.isClosed()) return;
   lastApplyUrl = page.url();
-  await page.waitForTimeout(1000);
+  await page.waitForLoadState('domcontentloaded').catch(() => {});
+  await page.waitForTimeout(250).catch(() => {});
   await assertApplyPageAccessible(page);
 }
 
