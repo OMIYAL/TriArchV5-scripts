@@ -69,7 +69,10 @@ export class AuthLoginPage extends BasePage {
       await this.rememberMeText.click();
     }
     
-    await this.loginButton.click();
+    await Promise.all([
+      this.page.waitForURL(/storefront/i, { timeout: 90000 }),
+      this.loginButton.click(),
+    ]);
   }
 
   async completeLoginFlow(
@@ -77,6 +80,9 @@ export class AuthLoginPage extends BasePage {
     username: string,
     password: string
   ): Promise<void> {
+    await this.page.waitForLoadState('domcontentloaded');
+    await this.usernameInput.waitFor({ state: 'visible', timeout: 30000 });
+
     // Check if the tenant is already set to the target tenant to avoid redundant modals and timeouts
     const tenantLabel = this.page.locator('strong');
     const currentTenant = await tenantLabel.first().textContent().catch(() => '');
