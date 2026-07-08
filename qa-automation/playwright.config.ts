@@ -75,7 +75,7 @@ export default defineConfig({
       name: 'storefront-chromium',
       testMatch: ['**/tests/storefront/**/*.spec.ts', '**/features/storefront/**/*.feature.spec.js'],
       use: {
-        viewport: null,
+        viewport: { width: 1440, height: 900 },
         baseURL: process.env.STOREFRONT_BASE_URL,
       },
     },

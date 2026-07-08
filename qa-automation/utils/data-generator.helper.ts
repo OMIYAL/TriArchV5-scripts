@@ -24,7 +24,7 @@ export function generateDynamicProjectData(): DynamicProjectData {
   return {
     // Generate a unique project name (e.g. "Test Project Acme Steel 1234")
     name: `Test Project ${faker.commerce.productName()} ${faker.string.numeric(4)}`,
-    jurisdiction: faker.location.state(),
+    jurisdiction: faker.helpers.arrayElement(['Colorado', 'California', 'Texas', 'Florida', 'New York', 'Georgia']),
     streetAddress: faker.location.streetAddress(),
     city: faker.location.city(),
     state: faker.location.state({ abbreviated: true }),
