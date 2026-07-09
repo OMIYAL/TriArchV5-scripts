@@ -3,6 +3,7 @@ import { faker } from '@faker-js/faker';
 import { DynamicProjectData } from '../../utils/data-generator.helper';
 import { getRandomDocumentTitle, getRandomTestPdf } from '../../utils/document.helper';
 import { clickSelect2Option, closeSelect2Dropdown } from '../../utils/select2.helper';
+import { env } from '../../utils/env.helper';
 
 export class CreateProjectPage {
   private readonly page: Page;
@@ -198,7 +199,6 @@ export class CreateProjectPage {
       await this.page.keyboard.press('Escape').catch(() => { });
     }
   }
-
 
 
   getRawPage(): Page {

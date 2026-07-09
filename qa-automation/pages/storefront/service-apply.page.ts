@@ -2,6 +2,7 @@ import { Page, Locator } from '@playwright/test';
 import { BasePage } from '../base.page';
 import { CreateProjectPage } from './create-project.page';
 import { DocumentUploadComponent } from './document-upload.component';
+import { env } from '../../utils/env.helper';
 
 export class ServiceApplyPage extends BasePage {
   private readonly projectCombobox: Locator;
@@ -9,7 +10,7 @@ export class ServiceApplyPage extends BasePage {
   private readonly payIntakeFeeButton: Locator;
 
   constructor(page: Page) {
-    super(page, (process.env.STOREFRONT_BASE_URL || ''));
+    super(page, env.urls.storefront);
 
     this.projectCombobox = page
       .getByRole('combobox', { name: /No project|project/i })

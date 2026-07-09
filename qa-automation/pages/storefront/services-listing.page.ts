@@ -1,17 +1,18 @@
 import { Page, Locator } from '@playwright/test';
 import { faker } from '@faker-js/faker';
 import { BasePage } from '../base.page';
+import { env } from '../../utils/env.helper';
 
 export class ServicesListingPage extends BasePage {
   private readonly moreServicesRegion: Locator;
 
   constructor(page: Page) {
-    super(page, (process.env.STOREFRONT_BASE_URL || ''));
+    super(page, env.urls.storefront);
     this.moreServicesRegion = page.getByRole('region', { name: 'More services' });
   }
 
   /** Opens the services listing directly — avoids unnecessary About Us navigation. */
-  async openListing(tenantName: string = (process.env.TENANT_NAME || '')): Promise<void> {
+  async openListing(tenantName: string = env.tenant.name): Promise<void> {
     await this.goto('/services', { __tenant: tenantName });
     await this.waitForServicesLoaded();
   }
