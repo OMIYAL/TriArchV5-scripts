@@ -1,88 +1,136 @@
 import { Page, Locator } from '@playwright/test';
+import { faker } from '@faker-js/faker';
 import { BasePage } from '../base.page';
-import { env } from '../../utils/env.helper';
 
 export class ServicesListingPage extends BasePage {
   private readonly moreServicesRegion: Locator;
 
   constructor(page: Page) {
-    super(page, env.urls.storefront);
+    super(page, (process.env.STOREFRONT_BASE_URL || ''));
     this.moreServicesRegion = page.getByRole('region', { name: 'More services' });
   }
 
-  async expandMoreServicesIfNeeded(): Promise<void> {
+  /** Opens the services listing directly — avoids unnecessary About Us navigation. */
+  async openListing(tenantName: string = (process.env.TENANT_NAME || '')): Promise<void> {
+    await this.goto('/services', { __tenant: tenantName });
+    await this.waitForServicesLoaded();
+  }
+
+  private async expandMoreServicesIfNeeded(): Promise<void> {
+    if (await this.visibleServiceApplyLinks().count() > 0) return;
+
     try {
-      if (await this.moreServicesRegion.isVisible({ timeout: 3000 })) {
-        await this.click(this.moreServicesRegion);
+      if (await this.moreServicesRegion.isVisible({ timeout: 2000 })) {
+        await this.moreServicesRegion.scrollIntoViewIfNeeded();
+        await this.moreServicesRegion.click();
+        await this.page.waitForTimeout(500);
       }
     } catch {
-      // Region might not exist or be visible
+      // Region may not exist — proceed
     }
   }
 
-  /**
-   * DYNAMIC: Finds all available service request links, 
-   * picks one RANDOMLY, captures its URL, and clicks it.
-   * @returns The href (URL) of the service that was clicked
-   */
-  /**
-   * DYNAMIC: Navigates to a RANDOM page, then picks a RANDOM service from that page.
-   * @returns The href (URL) of the service that was clicked
-   */
-  async clickRandomAvailableService(): Promise<string> {
-    // 1. Expand the "More services" section so pagination buttons appear
-    await this.expandMoreServicesIfNeeded();
-    await this.page.waitForTimeout(1000);
+  private serviceApplyLinks(): Locator {
+    return this.page.locator('a[href*="serviceDefinitionId"]');
+  }
 
-    // 2. Find all pagination buttons (e.g., "Page 1", "Page 2", etc.)
-    const pageButtons = this.page.locator('button:has-text("Page")');
-    let totalPages = 1;
-    
-    if (await pageButtons.count() > 0) {
-      totalPages = await pageButtons.count();
+  private visibleServiceApplyLinks(): Locator {
+    return this.page.locator('a[href*="serviceDefinitionId"]:visible');
+  }
+
+  private async waitForServicesLoaded(): Promise<void> {
+    const loading = this.page.getByText('Loading services', { exact: false });
+    if (await loading.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await loading.waitFor({ state: 'hidden', timeout: 30000 });
     }
-    
-    console.log(`📚 Found ${totalPages} pages of services.`);
+    await this.visibleServiceApplyLinks().first().waitFor({ state: 'visible', timeout: 30000 });
+  }
 
-    // 3. Pick a random page number
-    const randomPageNumber = Math.floor(Math.random() * totalPages) + 1; 
-    console.log(`🎲 Navigating to Page ${randomPageNumber}...`);
-    
-    // 4. Click the random page button (unless it's page 1, which we are already on)
-    if (randomPageNumber > 1) {
+  /** Picks a random service link, clicks it, and waits for apply or auth redirect. */
+  async clickRandomAvailableService(): Promise<string> {
+    await this.expandMoreServicesIfNeeded();
+    await this.waitForServicesLoaded();
+
+    const pageButtons = this.page.locator('button:has-text("Page")');
+    const totalPages = Math.max(1, await pageButtons.count());
+    const randomPageNumber = totalPages === 1 ? 1 : faker.number.int({ min: 1, max: totalPages });
+
+    if (totalPages > 1) {
+      console.log(`Found ${totalPages} pages of services. Navigating to Page ${randomPageNumber}...`);
       await this.page.getByRole('button', { name: `Page ${randomPageNumber}` }).click();
       await this.page.waitForLoadState('domcontentloaded');
-      await this.page.waitForTimeout(1500); // Wait for the new page of services to render
+      await this.waitForServicesLoaded();
     }
 
-    // 5. Find all services on this newly loaded random page
-    const allServiceLinks = this.page.getByRole('link', { name: /^Request .+ Review$/ });
-    await allServiceLinks.first().waitFor({ state: 'visible', timeout: 10000 });
-    
-    let totalServicesOnPage = await allServiceLinks.count();
-    
-    // Safety Check: If the random page was mysteriously empty, fallback to Page 1
+    const visibleServiceLinks = this.visibleServiceApplyLinks();
+    let totalServicesOnPage = await visibleServiceLinks.count();
+
+    if (totalServicesOnPage === 0 && totalPages > 1) {
+      console.log('No visible service links found. Falling back to Page 1...');
+      await this.page.getByRole('button', { name: 'Page 1' }).click().catch(() => {});
+      await this.waitForServicesLoaded();
+      totalServicesOnPage = await visibleServiceLinks.count();
+    }
+
     if (totalServicesOnPage === 0) {
-      console.log('⚠️ Random page was empty. Falling back to Page 1...');
-      await this.page.getByRole('button', { name: 'Page 1' }).click();
-      await this.page.waitForTimeout(1500);
-      totalServicesOnPage = await allServiceLinks.count();
+      throw new Error('No visible service application links found on the services listing page.');
     }
 
-    console.log(`🔍 Found ${totalServicesOnPage} services on Page ${randomPageNumber}.`);
-    
-    // 6. Pick a random service from this page
-    const randomIndex = Math.floor(Math.random() * totalServicesOnPage);
-    const selectedService = allServiceLinks.nth(randomIndex);
-    
-    // Get the text for logging
+    console.log(`Found ${totalServicesOnPage} visible services on Page ${randomPageNumber}.`);
+
+    const randomIndex = faker.number.int({ min: 0, max: totalServicesOnPage - 1 });
+    const selectedService = visibleServiceLinks.nth(randomIndex);
     const serviceName = await selectedService.textContent();
-    console.log(`🎯 Randomly selected [Page ${randomPageNumber}, Item ${randomIndex + 1}/${totalServicesOnPage}]: ${serviceName?.trim()}`);
-    
-    // 7. Capture URL and click
     const targetHref = await selectedService.getAttribute('href') || '';
-    await this.click(selectedService);
-    
+
+    console.log(`Randomly selected [Page ${randomPageNumber}, Item ${randomIndex + 1}/${totalServicesOnPage}]: ${serviceName?.trim()}`);
+
+    await selectedService.scrollIntoViewIfNeeded();
+    await Promise.all([
+      this.page.waitForURL(/services\/Apply|Account\/Login|auth.*Login/i, { timeout: 60000 }),
+      selectedService.click(),
+    ]);
+
     return targetHref;
+  }
+
+  /** Navigates to a service by partial name (case-insensitive). Searches across all pages. */
+  async navigateToService(serviceName: string): Promise<string> {
+    await this.expandMoreServicesIfNeeded();
+    await this.waitForServicesLoaded();
+
+    const namePattern = new RegExp(serviceName, 'i');
+    const findLink = () => this.visibleServiceApplyLinks().filter({ hasText: namePattern });
+
+    if (await findLink().first().isVisible({ timeout: 5000 }).catch(() => false)) {
+      const link = findLink().first();
+      const targetHref = await link.getAttribute('href') || '';
+      await Promise.all([
+        this.page.waitForURL(/services\/Apply|Account\/Login|auth.*Login/i, { timeout: 60000 }),
+        this.click(link),
+      ]);
+      return targetHref;
+    }
+
+    const pageButtons = this.page.locator('button:has-text("Page")');
+    const totalPages = await pageButtons.count();
+
+    for (let i = 1; i <= totalPages; i++) {
+      await this.page.getByRole('button', { name: `Page ${i}` }).click();
+      await this.page.waitForLoadState('domcontentloaded');
+      await this.waitForServicesLoaded();
+
+      if (await findLink().first().isVisible({ timeout: 5000 }).catch(() => false)) {
+        const link = findLink().first();
+        const targetHref = await link.getAttribute('href') || '';
+        await Promise.all([
+          this.page.waitForURL(/services\/Apply|Account\/Login|auth.*Login/i, { timeout: 60000 }),
+          this.click(link),
+        ]);
+        return targetHref;
+      }
+    }
+
+    throw new Error(`Service "${serviceName}" not found on any page`);
   }
 }

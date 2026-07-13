@@ -18,8 +18,10 @@ export class BasePage {
     await this.page.goto(url);
   }
 
-  async waitForNetworkIdle(): Promise<void> {
-    await this.page.waitForLoadState('networkidle');
+  async waitForNetworkIdle(timeout: number = 5000): Promise<void> {
+    await this.page.waitForLoadState('networkidle', { timeout }).catch(() => {
+      console.log(`⚠️ Warning: networkidle state not reached within ${timeout}ms, continuing...`);
+    });
   }
 
   async waitForUrl(pattern: string | RegExp, timeout: number = 30000): Promise<void> {

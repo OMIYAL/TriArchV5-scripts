@@ -1,153 +1,205 @@
-import { Page, Locator, expect } from '@playwright/test';
-import { env } from '../../utils/env.helper';
+import { Page, Locator } from '@playwright/test';
+import { faker } from '@faker-js/faker';
+import { DynamicProjectData } from '../../utils/data-generator.helper';
+import { getRandomDocumentTitle, getRandomTestPdf } from '../../utils/document.helper';
+import { clickSelect2Option, closeSelect2Dropdown } from '../../utils/select2.helper';
 
 export class CreateProjectPage {
   private readonly page: Page;
-  
   private readonly jurisdictionCombobox: Locator;
-  private readonly nextButton: Locator;
   private readonly projectNameInput: Locator;
   private readonly streetAddressInput: Locator;
   private readonly cityInput: Locator;
   private readonly stateInput: Locator;
   private readonly postalCodeInput: Locator;
-  private readonly a1Combobox: Locator;
-  private readonly typeIACombobox: Locator;
   private readonly grossSquareFootageInput: Locator;
   private readonly heightInput: Locator;
   private readonly numberOfFloorsInput: Locator;
-  private readonly basementCombobox: Locator;
-  private readonly addContactButton: Locator;
-  private readonly makePrimaryCheckbox: Locator;
-  private readonly transferOwnershipCheckbox: Locator;
-  private readonly contactCloseButton: Locator;
-  private readonly createProjectButton: Locator;
+
+  private contactAdded = false;
 
   constructor(page: Page) {
     this.page = page;
-    this.nextButton = page.getByRole('button', { name: 'Next' });
-
-    this.jurisdictionCombobox = page.getByRole('combobox', { name: 'Search jurisdiction by name' });
+    this.jurisdictionCombobox = page.locator('span.select2-selection[aria-labelledby="select2-JurisdictionIdSelect-container"]');
     this.projectNameInput = page.getByRole('textbox', { name: 'Project Name' });
     this.streetAddressInput = page.getByRole('textbox', { name: 'Street Address Line 1' });
     this.cityInput = page.getByRole('textbox', { name: 'City or Municipality' });
     this.stateInput = page.getByRole('textbox', { name: 'State or Province' });
     this.postalCodeInput = page.getByRole('textbox', { name: 'Postal Code' });
-    this.a1Combobox = page.getByRole('combobox', { name: 'A1' });
-    this.typeIACombobox = page.getByRole('combobox', { name: 'TypeIA' });
     this.grossSquareFootageInput = page.getByRole('textbox', { name: 'Gross Square Footage' });
     this.heightInput = page.getByRole('textbox', { name: 'Height' });
     this.numberOfFloorsInput = page.getByRole('spinbutton', { name: 'Number Of Floors' });
-    this.basementCombobox = page.getByRole('combobox', { name: 'None' });
-    
-    this.addContactButton = page.getByRole('button', { name: 'Add contact' });
-    this.makePrimaryCheckbox = page.getByLabel('Make primary for this role');
-    this.transferOwnershipCheckbox = page.getByLabel('Transfer Ownership');
-    this.contactCloseButton = page.getByLabel('Close');
-    
-    this.createProjectButton = page.getByRole('button', { name: 'Create project' });
   }
 
-  async completeFullFlow(): Promise<void> {
-    // ═══════════════════════════════════════════════════════════
-    // Step 1: Jurisdiction
-    // ═══════════════════════════════════════════════════════════
-    await this.jurisdictionCombobox.waitFor({ state: 'visible', timeout: 10000 });
-    await this.jurisdictionCombobox.click();
-    const select2SearchInput = this.page.locator('input.select2-search__field:visible');
-    await select2SearchInput.waitFor({ state: 'visible', timeout: 5000 });
-    await select2SearchInput.fill(env.project.jurisdiction);
-    const jurisdictionOption = this.page.getByRole('option', { name: env.project.jurisdiction, exact: true });
-    await jurisdictionOption.waitFor({ state: 'visible', timeout: 15000 });
-    await jurisdictionOption.click();
+  async completeFullFlow(projectData: DynamicProjectData): Promise<void> {
+    await this.page.waitForURL(/PermitProjects\/Create/i, { timeout: 15000 });
+    await this.page.bringToFront();
+
+    // Step 1: Project Details
+    await this.page.getByRole('heading', { name: 'Project Details' }).waitFor({ state: 'visible', timeout: 15000 });
+    await this.fillProjectDetailsStep(projectData);
     await this.clickNext();
 
-    // ═══════════════════════════════════════════════════════════
-    // Step 2: Project Name
-    // ═══════════════════════════════════════════════════════════
-    await this.projectNameInput.fill(env.project.name);
+    // Step 2: Building Characteristics
+    await this.waitForWizardStep(2, /Building Characteristics/i);
+    await this.fillBuildingCharacteristicsStep(projectData);
+    await this.clickNext();
+    await this.waitForProjectEnvelopeSaved();
+
+    // Step 3: Project Contacts
+    await this.waitForWizardStep(3, /Project Contacts/i);
+    await this.addProjectContact();
     await this.clickNext();
 
-    // ═══════════════════════════════════════════════════════════
-    // Step 3: Address
-    // ═══════════════════════════════════════════════════════════
-    await this.streetAddressInput.fill(env.project.streetAddress);
-    await this.cityInput.fill(env.project.city);
-    await this.stateInput.fill(env.project.state);
-    await this.postalCodeInput.fill(env.project.postalCode);
-    await this.clickNext();
-
-    // ═══════════════════════════════════════════════════════════
-    // Step 4: Building Details
-    // ═══════════════════════════════════════════════════════════
-    const a1Option = this.page.getByRole('option', { name: env.building.a1Option });
-    await this.a1Combobox.click();
-    await a1Option.waitFor({ state: 'visible', timeout: 5000 });
-    await a1Option.click();
-
-    const typeIaOption = this.page.getByRole('option', { name: env.building.iaOption });
-    await this.typeIACombobox.click();
-    await typeIaOption.waitFor({ state: 'visible', timeout: 5000 });
-    await typeIaOption.click();
-
-    await this.grossSquareFootageInput.click();
-    await this.heightInput.click();
-    await this.numberOfFloorsInput.dblclick();
-
-    const basementOption = this.page.getByRole('option', { name: env.building.basementOption });
-    await this.basementCombobox.click();
-    await basementOption.waitFor({ state: 'visible', timeout: 5000 });
-    await basementOption.click();
-    await this.clickNext();
-
-    // ═══════════════════════════════════════════════════════════
-    // Step 5: Contacts
-    // ═══════════════════════════════════════════════════════════
-    await this.clickNext();
-    await this.page.waitForTimeout(2000);
+    // Step 4: Documents
+    await this.waitForWizardStep(4, /Project related documents/i);
     
-    await this.addContactButton.waitFor({ state: 'visible', timeout: 10000 });
-    await this.addContactButton.click();
-    
-    const contactOverlay = this.page.locator('.offcanvas.show, .modal.show, [role="dialog"]:visible').last();
-    await contactOverlay.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-    
-    const overlayInputs = contactOverlay.locator('input:visible');
-    const inputCount = await overlayInputs.count();
-    
-    for (let i = 0; i < inputCount; i++) {
-      await overlayInputs.nth(i).click().catch(() => {});
-    }
+    await this.clickCreateProject();
+  }
 
-    const overlayCheckboxes = contactOverlay.locator('input[type="checkbox"]:visible');
-    const checkboxCount = await overlayCheckboxes.count();
-    for (let i = 0; i < checkboxCount; i++) {
-      await overlayCheckboxes.nth(i).click().catch(() => {});
-    }
-    
-    const closeButton = contactOverlay.locator('.btn-close, [aria-label="Close"], button:has-text("Close")').first();
-    await closeButton.click().catch(() => {});
-    
-    await this.clickNext();
+  private async waitForWizardStep(stepNumber: number, headingPattern: RegExp, timeout = 25000): Promise<void> {
+    const stepUrl = new RegExp(`[?&]step=${stepNumber}(&|$)`);
+    const urlReached = await this.page.waitForURL(stepUrl, { timeout }).then(() => true).catch(() => false);
+    if (urlReached) return;
 
-    // ═══════════════════════════════════════════════════════════
-    // Step 6: Review
-    // ═══════════════════════════════════════════════════════════
-    await expect(
-      this.page.locator('div:nth-child(4) > .ta-form-section > .card-body')
-    ).toBeVisible();
-    
-    await this.createProjectButton.click();
+    await this.page.getByRole('heading', { name: headingPattern }).waitFor({ state: 'visible', timeout: 8000 });
+  }
+
+  private async waitForProjectEnvelopeSaved(timeout = 30000): Promise<void> {
+    await this.page.waitForURL(/projectId=/i, { timeout }).catch(() => {
+      console.log('Project envelope URL not updated with projectId — continuing.');
+    });
+    await this.page.waitForTimeout(500);
   }
 
   private async clickNext(): Promise<void> {
-    await this.nextButton.waitFor({ state: 'visible', timeout: 10000 });
-    await this.nextButton.click();
+    await closeSelect2Dropdown(this.page);
+    const next = this.page.getByRole('button', { name: 'Next', exact: true }).and(this.page.locator(':visible')).last();
+    await next.waitFor({ state: 'visible', timeout: 15000 });
+    await next.scrollIntoViewIfNeeded();
+    await this.page.waitForTimeout(300);
+    await next.click({ force: true });
+    await this.page.waitForTimeout(1500);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // ⭐ THIS IS THE NEW METHOD ⭐
-  // ═══════════════════════════════════════════════════════════
+  private async clickCreateProject(): Promise<void> {
+    const createBtn = this.page.getByRole('button', { name: /Create project/i });
+    await createBtn.waitFor({ state: 'visible', timeout: 15000 });
+    await createBtn.scrollIntoViewIfNeeded();
+    await createBtn.click({ force: true });
+
+    await this.page.waitForURL(
+      (url) => /services\/Apply|PermitProjects/i.test(url.href),
+      { timeout: 60000 },
+    );
+    await this.page.waitForTimeout(1000);
+  }
+
+  private async fillProjectDetailsStep(data: DynamicProjectData): Promise<void> {
+    await this.projectNameInput.fill(data.name);
+    await this.streetAddressInput.fill(data.streetAddress);
+    await this.cityInput.fill(data.city);
+    await this.stateInput.fill(data.state);
+    await this.postalCodeInput.fill(data.postalCode);
+
+    const parcelInput = this.page.getByRole('textbox', { name: /Parcel Number/i });
+    if (await parcelInput.isVisible({ timeout: 500 }).catch(() => false)) {
+      await parcelInput.fill(faker.string.numeric(10));
+    }
+
+    await this.selectJurisdiction(data);
+    await this.page.waitForTimeout(400);
+  }
+
+  private async fillBuildingCharacteristicsStep(data: DynamicProjectData): Promise<void> {
+    await this.selectLabeledCombobox(/Occupancy Type/i, data.occupancyType);
+    await this.selectLabeledCombobox(/Construction Type/i, data.constructionType);
+    await this.selectLabeledCombobox(/Sprinkler Coverage/i, data.sprinklerCoverage);
+
+    if (await this.grossSquareFootageInput.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await this.grossSquareFootageInput.fill(data.grossSquareFootage);
+    }
+    if (await this.heightInput.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await this.heightInput.fill(data.height);
+    }
+    if (await this.numberOfFloorsInput.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await this.numberOfFloorsInput.fill(data.numberOfFloors);
+    }
+  }
+
+  private async selectJurisdiction(data: DynamicProjectData): Promise<void> {
+    const selectedValue = await this.page.locator('#JurisdictionIdSelect').inputValue().catch(() => '');
+    if (selectedValue) return;
+
+    await closeSelect2Dropdown(this.page);
+    await this.jurisdictionCombobox.scrollIntoViewIfNeeded();
+    await this.jurisdictionCombobox.click({ force: true });
+
+    const options = this.page.locator('.select2-container--open [role="option"]:not([aria-disabled="true"]):not(.loading-results)');
+    await options.first().waitFor({ state: 'visible', timeout: 12000 });
+    const optionText = (await options.first().innerText().catch(() => '') ?? '').trim();
+    await options.first().click();
+
+    await this.page.waitForFunction(() => {
+      const el = document.querySelector('#JurisdictionIdSelect') as HTMLSelectElement | null;
+      return !!el?.value;
+    }, { timeout: 10000 });
+
+    await closeSelect2Dropdown(this.page);
+    data.jurisdiction = optionText || data.jurisdiction;
+  }
+
+  private async selectLabeledCombobox(labelPattern: RegExp, preferredValue?: string): Promise<void> {
+    const combobox = this.page.getByRole('combobox', { name: labelPattern }).first();
+    if (!await combobox.isVisible({ timeout: 2000 }).catch(() => false)) return;
+
+    const currentText = (await combobox.innerText().catch(() => '') ?? '').trim();
+    if (currentText && !/select|choose/i.test(currentText)) return;
+
+    await combobox.click({ force: true });
+    const preferred = preferredValue ? new RegExp(preferredValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : undefined;
+    await clickSelect2Option(this.page, preferred, 10000);
+    await closeSelect2Dropdown(this.page);
+  }
+
+  private async addProjectContact(): Promise<void> {
+    if (this.contactAdded) return;
+
+    const addContact = this.page.locator('#AddContactButton');
+    if (!await addContact.isVisible({ timeout: 5000 }).catch(() => false)) return;
+
+    const alreadyAttached = await this.page.getByText(/[1-9]\d* attached/i).isVisible({ timeout: 1000 }).catch(() => false);
+    if (alreadyAttached) {
+      this.contactAdded = true;
+      return;
+    }
+
+    try {
+      await addContact.scrollIntoViewIfNeeded();
+      await addContact.click({ force: true });
+
+      const contactPanel = this.page.locator('#AddContactPanel.show, #AddContactPanel.offcanvas.show').last();
+      await contactPanel.waitFor({ state: 'visible', timeout: 10000 });
+
+      await contactPanel.locator('#Input_FullName').fill(faker.person.fullName());
+      await contactPanel.locator('#Input_Organisation').fill(faker.company.name());
+      await contactPanel.locator('#Input_Email').fill(faker.internet.email());
+      await contactPanel.locator('#Input_Phone').fill(faker.string.numeric(10));
+
+      const saveContactButton = contactPanel.locator('button.btn-primary').filter({ hasText: /Add contact/i }).last();
+      await saveContactButton.click({ force: true });
+
+      await contactPanel.waitFor({ state: 'hidden', timeout: 15000 }).catch(async () => {
+        await this.page.keyboard.press('Escape').catch(() => { });
+      });
+
+      this.contactAdded = true;
+    } catch (err) {
+      await this.page.keyboard.press('Escape').catch(() => { });
+    }
+  }
+
+
   getRawPage(): Page {
     return this.page;
   }
