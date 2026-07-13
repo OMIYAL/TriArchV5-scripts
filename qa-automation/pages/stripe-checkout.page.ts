@@ -1,5 +1,4 @@
 import { Page, Locator } from '@playwright/test';
-import { env } from '../utils/env.helper';
 
 export class StripeCheckoutPage {
   private readonly page: Page;
@@ -27,13 +26,13 @@ export class StripeCheckoutPage {
   }
 
   async completePayment(): Promise<void> {
-    await this.emailInput.fill(env.stripe.email);
-    await this.cardNumberInput.fill(env.stripe.cardNumber);
-    await this.expirationInput.fill(env.stripe.expiration);
-    await this.cvcInput.fill(env.stripe.cvc);
-    await this.cardholderNameInput.fill(env.stripe.cardholderName);
+    await this.emailInput.fill((process.env.STRIPE_TEST_EMAIL || 'test@test.com'));
+    await this.cardNumberInput.fill((process.env.STRIPE_TEST_CARD_NUMBER || ''));
+    await this.expirationInput.fill((process.env.STRIPE_TEST_EXPIRATION || ''));
+    await this.cvcInput.fill((process.env.STRIPE_TEST_CVC || ''));
+    await this.cardholderNameInput.fill((process.env.STRIPE_TEST_CARDHOLDER_NAME || ''));
     await this.countrySelect.selectOption('US');
-    await this.zipInput.fill(env.stripe.zip);
+    await this.zipInput.fill((process.env.STRIPE_TEST_ZIP || ''));
     await this.submitButton.click();
   }
 }

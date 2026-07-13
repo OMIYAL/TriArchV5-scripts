@@ -1,6 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { BasePage } from './base.page';
-import { env } from '../utils/env.helper';
 
 export class AuthLoginPage extends BasePage {
   private readonly switchLink: Locator;
@@ -11,7 +10,7 @@ export class AuthLoginPage extends BasePage {
   private readonly loginButton: Locator;
 
   constructor(page: Page) {
-    super(page, env.urls.auth);
+    super(page, (process.env.AUTH_BASE_URL || ''));
     
     this.switchLink = page.getByRole('link', { name: 'switch' });
     this.tenantNameInput = page.getByRole('textbox', { name: 'Name', exact: true });
