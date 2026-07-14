@@ -3,9 +3,9 @@ import { expect } from '@playwright/test';
 import { StorefrontHomePage } from '../pages/storefront/storefront-home.page';
 import { ServicesListingPage } from '../pages/storefront/services-listing.page';
 import { ServiceApplyPage } from '../pages/storefront/service-apply.page';
-import { DocumentUploadComponent } from '../pages/storefront/document-upload.component';
 import { AuthLoginPage } from '../pages/auth-login.page';
 import { StripeCheckoutPage } from '../pages/stripe-checkout.page';
+import { DocumentUploadComponent } from '../pages/storefront/document-upload.component';
 import { generateDynamicProjectData, DynamicProjectData } from '../utils/data-generator.helper';
 import { fillApplicantFields } from '../utils/form-fill.helper';
 import { closeSelect2Dropdown } from '../utils/select2.helper';
@@ -14,10 +14,6 @@ const { Given, When, Then } = createBdd();
 
 let targetServiceUrl = '';
 let currentProjectData: DynamicProjectData | null = null;
-
-// ─────────────────────────────────────────────
-// GIVEN
-// ─────────────────────────────────────────────
 
 Given('the citizen is on the Storefront home page', async ({ page }) => {
   const storefrontHome = new StorefrontHomePage(page);
@@ -35,10 +31,6 @@ Given('the citizen navigates to an available service', async ({ page }) => {
     targetServiceUrl = await servicesListing.clickRandomAvailableService();
   }
 });
-
-// ─────────────────────────────────────────────
-// WHEN
-// ─────────────────────────────────────────────
 
 When('the citizen logs in with valid credentials', async ({ page }) => {
   const authLogin = new AuthLoginPage(page);
@@ -59,7 +51,7 @@ When('the citizen logs in with valid credentials', async ({ page }) => {
 
 When('creates a new project for the service application', async ({ page }) => {
   const serviceApply = new ServiceApplyPage(page);
-  
+
   await serviceApply.waitForProjectCombobox();
   const createProjectPage = await serviceApply.openCreateProjectPopup();
 
@@ -67,8 +59,8 @@ When('creates a new project for the service application', async ({ page }) => {
   await createProjectPage.completeFullFlow(currentProjectData);
 
   const rawPopupPage = createProjectPage.getRawPage();
-  await rawPopupPage.waitForURL(/projectId=|services\/Apply/i, { timeout: 60000 }).catch(() => {});
-  
+  await rawPopupPage.waitForURL(/projectId=|services\/Apply/i, { timeout: 60000 }).catch(() => { });
+
   if (!rawPopupPage.isClosed()) {
     await rawPopupPage.close();
   }
@@ -94,19 +86,19 @@ When('completes all required form steps and checklists', async ({ page }) => {
     await page.waitForTimeout(1000);
     await closeSelect2Dropdown(page);
 
-    // Stop if we reach the payment step
-    if (await payButton.isVisible().catch(() => false) || await page.getByRole('heading', { name: /intake fee/i }).isVisible().catch(() => false)) {
+    if (await payButton.isVisible().catch(() => false) ||
+      await page.getByRole('heading', { name: /intake fee/i }).isVisible().catch(() => false)
+    ) {
       console.log('Intake fee step reached.');
       return;
     }
 
-    // Handle Checklist Step
     if (await page.getByText('Submission checklist', { exact: false }).isVisible().catch(() => false)) {
       const checklistInputs = page.locator('.ta-apply-checklist__input');
       const boxCount = await checklistInputs.count();
       for (let i = 0; i < boxCount; i++) {
         const box = checklistInputs.nth(i);
-        if (!await box.isChecked()) {
+        if (!(await box.isChecked())) {
           await box.check({ force: true }).catch(() => {});
         }
       }
@@ -125,27 +117,26 @@ When('completes all required form steps and checklists', async ({ page }) => {
       continue;
     }
 
-    // Fill normal fields
-    const emptyFields = page.locator('input:visible:not([readonly]):not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea:visible:not([readonly])');
+    const emptyFields = page.locator(
+      'input:visible:not([readonly]):not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea:visible:not([readonly])'
+    );
     let hasEmpty = false;
     for (let i = 0; i < await emptyFields.count(); i++) {
       if (!(await emptyFields.nth(i).inputValue()).trim()) {
-        hasEmpty = true; break;
+        hasEmpty = true;
+        break;
       }
     }
-    
     if (hasEmpty) {
       await fillApplicantFields(page, currentProjectData);
       await closeSelect2Dropdown(page);
     }
 
-    // Upload Documents
     if (!serviceDocUploaded) {
       const uploaded = await new DocumentUploadComponent(page).uploadIfVisible(undefined, undefined, 'service');
       if (uploaded) serviceDocUploaded = true;
     }
 
-    // Click Next
     if (await nextButton.isVisible().catch(() => false)) {
       await nextButton.click({ force: true });
       await page.waitForTimeout(2000);
@@ -176,12 +167,33 @@ When('completes the intake fee payment via Stripe if required', async ({ page })
 
   const stripePage = popup || page;
   await new StripeCheckoutPage(stripePage).completePayment();
-  await page.waitForURL(/storefront/, { timeout: 90000 }).catch(() => {});
+  await page.waitForURL(/storefront/, { timeout: 90000 }).catch(() => { });
 });
 
-// ─────────────────────────────────────────────
-// THEN
-// ─────────────────────────────────────────────
+Then('the new submission triggers a notification', async ({ page }) => {
+  const bodyText = await page.locator('body').innerText();
+  const trackingMatch = bodyText.match(/([A-Z]{2,4}\d{3}\s*-\s*[A-Z]{2}\s*-\s*\d{4}\s*-\s*\d{5})/);
+  const trackingNumber = trackingMatch ? trackingMatch[1].replace(/\s+/g, '') : '';
+
+  const notifButton = page.locator('a[aria-label="Notifications"]').first();
+  await notifButton.click();
+
+  const dropdown = page.locator('.dropdown-menu.show, .dropdown-menu[data-bs-popper]').first();
+  await expect(dropdown).toBeVisible({ timeout: 15000 });
+
+  const targetNotification = dropdown.locator('.notif-item', { hasText: trackingNumber || 'Request' }).first();
+  await expect(targetNotification).toBeVisible({ timeout: 30000 });
+
+  await Promise.all([
+    page.waitForURL(/ServiceRequests\/Detail/i, { timeout: 30000 }),
+    targetNotification.click(),
+  ]);
+
+  if (trackingNumber) {
+    const trackingHeading = page.locator('h1, h2, h3, h4, h5, h6, .page-title, .title').filter({ hasText: trackingNumber }).first();
+    await expect(trackingHeading).toBeVisible({ timeout: 15000 });
+  }
+});
 
 Then('the service request should be submitted successfully', async ({ page }) => {
   await page

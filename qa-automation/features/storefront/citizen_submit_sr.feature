@@ -10,3 +10,4 @@ Feature: Storefront Citizen Service Request Submission
     And completes the intake fee payment via Stripe if required
     Then the service request should be submitted successfully
     And the tracking number and service request state should be saved
+    And the new submission triggers a notification
