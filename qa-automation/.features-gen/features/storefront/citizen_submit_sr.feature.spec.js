@@ -12,6 +12,7 @@ test.describe("Storefront Citizen Service Request Submission", () => {
     await And("completes the intake fee payment via Stripe if required", null, { page });
     await Then("the service request should be submitted successfully", null, { page });
     await And("the tracking number and service request state should be saved", null, { page });
+    await And("the new submission triggers a notification", null, { page });
   });
 
 });
