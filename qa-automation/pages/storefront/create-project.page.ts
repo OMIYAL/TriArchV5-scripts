@@ -57,7 +57,7 @@ export class CreateProjectPage {
     await this.clickCreateProject();
   }
 
-  private async waitForWizardStep(stepNumber: number, headingPattern: RegExp, timeout = 25000): Promise<void> {
+  async waitForWizardStep(stepNumber: number, headingPattern: RegExp, timeout = 25000): Promise<void> {
     const stepUrl = new RegExp(`[?&]step=${stepNumber}(&|$)`);
     const urlReached = await this.page.waitForURL(stepUrl, { timeout }).then(() => true).catch(() => false);
     if (urlReached) return;
@@ -65,14 +65,14 @@ export class CreateProjectPage {
     await this.page.getByRole('heading', { name: headingPattern }).waitFor({ state: 'visible', timeout: 8000 });
   }
 
-  private async waitForProjectEnvelopeSaved(timeout = 30000): Promise<void> {
+  async waitForProjectEnvelopeSaved(timeout = 30000): Promise<void> {
     await this.page.waitForURL(/projectId=/i, { timeout }).catch(() => {
       console.log('Project envelope URL not updated with projectId — continuing.');
     });
     await this.page.waitForTimeout(500);
   }
 
-  private async clickNext(): Promise<void> {
+  async clickNext(): Promise<void> {
     await closeSelect2Dropdown(this.page);
     const next = this.page.getByRole('button', { name: 'Next', exact: true }).and(this.page.locator(':visible')).last();
     await next.waitFor({ state: 'visible', timeout: 15000 });
@@ -82,7 +82,7 @@ export class CreateProjectPage {
     await this.page.waitForTimeout(1500);
   }
 
-  private async clickCreateProject(): Promise<void> {
+  async clickCreateProject(): Promise<void> {
     const createBtn = this.page.getByRole('button', { name: /Create project/i });
     await createBtn.waitFor({ state: 'visible', timeout: 15000 });
     await createBtn.scrollIntoViewIfNeeded();
@@ -95,7 +95,7 @@ export class CreateProjectPage {
     await this.page.waitForTimeout(1000);
   }
 
-  private async fillProjectDetailsStep(data: DynamicProjectData): Promise<void> {
+  async fillProjectDetailsStep(data: DynamicProjectData): Promise<void> {
     await this.projectNameInput.fill(data.name);
     await this.streetAddressInput.fill(data.streetAddress);
     await this.cityInput.fill(data.city);
@@ -111,7 +111,7 @@ export class CreateProjectPage {
     await this.page.waitForTimeout(400);
   }
 
-  private async fillBuildingCharacteristicsStep(data: DynamicProjectData): Promise<void> {
+  async fillBuildingCharacteristicsStep(data: DynamicProjectData): Promise<void> {
     await this.selectLabeledCombobox(/Occupancy Type/i, data.occupancyType);
     await this.selectLabeledCombobox(/Construction Type/i, data.constructionType);
     await this.selectLabeledCombobox(/Sprinkler Coverage/i, data.sprinklerCoverage);
@@ -162,7 +162,7 @@ export class CreateProjectPage {
     await closeSelect2Dropdown(this.page);
   }
 
-  private async addProjectContact(): Promise<void> {
+  async addProjectContact(): Promise<void> {
     if (this.contactAdded) return;
 
     const addContact = this.page.locator('#AddContactButton');
