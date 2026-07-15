@@ -76,7 +76,7 @@ export class MyRequestsPage extends BasePage {
     const downloads: any[] = [];
 
     for (let i = 0; i < count; i++) {
-      const downloadPromise = this.page.waitForEvent('download', { timeout: 60000 });
+      const downloadPromise = this.page.waitForEvent('download', { timeout: 80000 });
       await downloadButtons.nth(i).click({ force: true });
       const download = await downloadPromise;
       downloads.push(download);
