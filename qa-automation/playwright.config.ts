@@ -7,7 +7,7 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const testDir = defineBddConfig({
   features: 'features/**/*.feature',
-  steps: 'steps/**/*.ts',
+  steps: ['steps/**/*.ts', 'fixtures/mimik.fixture.ts'],
 });
 
 // State file paths
@@ -80,6 +80,23 @@ export default defineConfig({
       },
     },
 
+    {
+      name: 'guide-mimik',
+      // Mimik capture adds per-click delay; allow longer waits than smoke.
+      timeout: 600000,
+      testMatch:
+        process.env.MIMIK_GUIDE === '1'
+          ? ['**/features/storefront/**/*.feature.spec.js']
+          : ['**/__mimik_guide_disabled__/**'],
+      use: {
+        headless: false,
+        viewport: null,
+        baseURL: process.env.STOREFRONT_BASE_URL,
+        actionTimeout: 45000,
+        navigationTimeout: 60000,
+      },
+    },
+
     // ═══════════════════════════════════════════════════════════════
     // PORTAL TESTS (Admin/Reviewer - Uses saved auth)
     // ═══════════════════════════════════════════════════════════════
@@ -103,6 +120,18 @@ export default defineConfig({
       use: {
         viewport: null,
         baseURL: process.env.STOREFRONT_BASE_URL,
+      },
+    },
+
+    // ═══════════════════════════════════════════════════════════════
+    // API CONTRACT (Spec → Gherkin → HTTP) — Control Room Contacts
+    // ═══════════════════════════════════════════════════════════════
+    {
+      name: 'api-control-room',
+      testMatch: ['**/features/api/**/*.feature.spec.js'],
+      use: {
+        baseURL: process.env.API_BASE_URL || 'https://localhost:44336',
+        ignoreHTTPSErrors: true,
       },
     },
   ],

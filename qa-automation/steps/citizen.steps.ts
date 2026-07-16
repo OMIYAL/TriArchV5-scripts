@@ -1,5 +1,5 @@
-import { createBdd } from 'playwright-bdd';
 import { expect } from '@playwright/test';
+import { Given, When, Then } from '../fixtures/mimik.fixture';
 import { StorefrontHomePage } from '../pages/storefront/storefront-home.page';
 import { ServicesListingPage } from '../pages/storefront/services-listing.page';
 import { ServiceApplyPage } from '../pages/storefront/service-apply.page';
@@ -9,8 +9,6 @@ import { StripeCheckoutPage } from '../pages/stripe-checkout.page';
 import { generateDynamicProjectData, DynamicProjectData } from '../utils/data-generator.helper';
 import { fillApplicantFields } from '../utils/form-fill.helper';
 import { closeSelect2Dropdown } from '../utils/select2.helper';
-
-const { Given, When, Then } = createBdd();
 
 let targetServiceUrl = '';
 let currentProjectData: DynamicProjectData | null = null;
@@ -22,6 +20,18 @@ let currentProjectData: DynamicProjectData | null = null;
 Given('the citizen is on the Storefront home page', async ({ page }) => {
   const storefrontHome = new StorefrontHomePage(page);
   await storefrontHome.navigate(process.env.TENANT_NAME || '');
+});
+
+Given('the operator has started Mimik recording', async ({ page }) => {
+  // No-op for normal smoke/CI. Only pauses during npm run test:guide.
+  if (process.env.MIMIK_GUIDE !== '1') {
+    return;
+  }
+
+  console.log(
+    '\n>>> Mimik guide mode: open the Mimik side panel → Start Capture → click Resume in Playwright Inspector\n',
+  );
+  await page.pause();
 });
 
 Given('the citizen navigates to an available service', async ({ page }) => {
@@ -41,39 +51,63 @@ Given('the citizen navigates to an available service', async ({ page }) => {
 // ─────────────────────────────────────────────
 
 When('the citizen logs in with valid credentials', async ({ page }) => {
-  const authLogin = new AuthLoginPage(page);
-  await authLogin.completeLoginFlow(
-    process.env.TENANT_NAME || '',
-    process.env.CITIZEN_USERNAME || '',
-    process.env.CITIZEN_PASSWORD || '',
-  );
+  const usernameVisible = await page
+    .getByRole('textbox', { name: 'Username', exact: true })
+    .isVisible()
+    .catch(() => false);
 
-  await page.waitForURL(/storefront/i, { timeout: 90000 });
+  // Already on storefront (e.g. session from a prior navigation) — skip the auth form.
+  if (!usernameVisible && /storefront/i.test(page.url())) {
+    console.log('Already on storefront without login form; skipping credential entry.');
+  } else {
+    const authLogin = new AuthLoginPage(page);
+    await authLogin.completeLoginFlow(
+      process.env.TENANT_NAME || '',
+      process.env.CITIZEN_USERNAME || '',
+      process.env.CITIZEN_PASSWORD || '',
+    );
+    await page.waitForURL(/storefront/i, { timeout: 90000 });
+  }
 
   if (!page.url().includes('/services/Apply') && targetServiceUrl) {
     let applyUrl = new URL(targetServiceUrl, process.env.STOREFRONT_BASE_URL || '');
     applyUrl.searchParams.set('__tenant', process.env.TENANT_NAME || '');
-    await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 60000 });
   }
 });
 
 When('creates a new project for the service application', async ({ page }) => {
   const serviceApply = new ServiceApplyPage(page);
   
-  await serviceApply.waitForProjectCombobox();
+  // Apply page may already have redirected to Create; combobox only exists on Apply.
+  if (!/PermitProjects\/Create/i.test(page.url())) {
+    await serviceApply.waitForProjectCombobox();
+  }
+
   const createProjectPage = await serviceApply.openCreateProjectPopup();
 
   currentProjectData = generateDynamicProjectData();
   await createProjectPage.completeFullFlow(currentProjectData);
 
-  const rawPopupPage = createProjectPage.getRawPage();
-  await rawPopupPage.waitForURL(/projectId=|services\/Apply/i, { timeout: 60000 }).catch(() => {});
-  
-  if (!rawPopupPage.isClosed()) {
-    await rawPopupPage.close();
+  const rawCreatePage = createProjectPage.getRawPage();
+  await rawCreatePage.waitForURL(/projectId=|services\/Apply/i, { timeout: 60000 }).catch(() => {});
+
+  // Only close a real popup — never close the main apply tab.
+  if (!rawCreatePage.isClosed() && rawCreatePage !== page) {
+    await rawCreatePage.close();
   }
 
-  await page.reload({ waitUntil: 'domcontentloaded' });
+  if (!/services\/Apply/i.test(page.url())) {
+    if (targetServiceUrl) {
+      let applyUrl = new URL(targetServiceUrl, process.env.STOREFRONT_BASE_URL || '');
+      applyUrl.searchParams.set('__tenant', process.env.TENANT_NAME || '');
+      await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    } else {
+      await page.reload({ waitUntil: 'domcontentloaded' });
+    }
+  } else {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+  }
   await page.waitForTimeout(1000);
 });
 

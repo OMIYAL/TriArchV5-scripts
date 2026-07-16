@@ -3,6 +3,7 @@ Feature: Storefront Citizen Service Request Submission
   @citizen @storefront @smoke
   Scenario: Citizen selects a service, logs in, creates a project, and submits a service request
     Given the citizen is on the Storefront home page
+    And the operator has started Mimik recording
     And the citizen navigates to an available service
     When the citizen logs in with valid credentials
     And creates a new project for the service application

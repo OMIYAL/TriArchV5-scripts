@@ -24,17 +24,38 @@ export class ServiceApplyPage extends BasePage {
   }
 
   async openCreateProjectPopup(): Promise<CreateProjectPage> {
-    await this.projectCombobox.waitFor({ state: 'visible', timeout: 15000 });
-    await this.createNewProjectLink.waitFor({ state: 'visible', timeout: 15000 });
+    // Service click / prior step sometimes already lands on Create (same tab).
+    if (/PermitProjects\/Create/i.test(this.page.url())) {
+      console.log('Already on PermitProjects/Create — filling on current page (no popup).');
+      await this.page.waitForLoadState('domcontentloaded');
+      return new CreateProjectPage(this.page);
+    }
 
-    const [popupPage] = await Promise.all([
-      this.page.waitForEvent('popup'),
-      this.createNewProjectLink.click(),
+    await this.projectCombobox.waitFor({ state: 'visible', timeout: 45000 });
+    await this.createNewProjectLink.waitFor({ state: 'visible', timeout: 45000 });
+
+    // Mimik / STG may open Create in the same tab instead of a popup window.
+    const opened = Promise.race([
+      this.page
+        .waitForEvent('popup', { timeout: 60000 })
+        .then((popup) => ({ kind: 'popup' as const, page: popup })),
+      this.page
+        .waitForURL(/PermitProjects\/Create/i, { timeout: 60000 })
+        .then(() => ({ kind: 'sameTab' as const, page: this.page })),
     ]);
 
-    await popupPage.waitForLoadState('domcontentloaded');
-    await popupPage.bringToFront();
-    return new CreateProjectPage(popupPage);
+    await this.createNewProjectLink.click();
+
+    const target = await opened;
+    await target.page.waitForLoadState('domcontentloaded');
+    if (target.kind === 'popup') {
+      await target.page.bringToFront();
+      console.log('Create project opened in a popup window.');
+    } else {
+      console.log('Create project opened in the same tab (no popup).');
+    }
+
+    return new CreateProjectPage(target.page);
   }
 
   async selectCreatedProject(projectName: string): Promise<void> {

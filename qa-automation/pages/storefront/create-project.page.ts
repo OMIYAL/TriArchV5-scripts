@@ -32,11 +32,11 @@ export class CreateProjectPage {
   }
 
   async completeFullFlow(projectData: DynamicProjectData): Promise<void> {
-    await this.page.waitForURL(/PermitProjects\/Create/i, { timeout: 15000 });
+    await this.page.waitForURL(/PermitProjects\/Create/i, { timeout: 45000 });
     await this.page.bringToFront();
 
     // Step 1: Project Details
-    await this.page.getByRole('heading', { name: 'Project Details' }).waitFor({ state: 'visible', timeout: 15000 });
+    await this.page.getByRole('heading', { name: 'Project Details' }).waitFor({ state: 'visible', timeout: 45000 });
     await this.fillProjectDetailsStep(projectData);
     await this.clickNext();
 
@@ -96,6 +96,7 @@ export class CreateProjectPage {
   }
 
   private async fillProjectDetailsStep(data: DynamicProjectData): Promise<void> {
+    await this.projectNameInput.waitFor({ state: 'visible', timeout: 45000 });
     await this.projectNameInput.fill(data.name);
     await this.streetAddressInput.fill(data.streetAddress);
     await this.cityInput.fill(data.city);
