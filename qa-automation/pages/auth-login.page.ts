@@ -11,7 +11,7 @@ export class AuthLoginPage extends BasePage {
 
   constructor(page: Page) {
     super(page, (process.env.AUTH_BASE_URL || ''));
-    
+
     this.switchLink = page.getByRole('link', { name: 'switch' });
     this.tenantNameInput = page.getByRole('textbox', { name: 'Name', exact: true });
     this.usernameInput = page.getByRole('textbox', { name: 'Username', exact: true });
@@ -23,23 +23,23 @@ export class AuthLoginPage extends BasePage {
   async switchTenant(tenantName: string): Promise<void> {
     // 1. Click the switch link
     await this.switchLink.click();
-    
+
     // 2. CRITICAL FIX: Wait for the modal dialog container to appear first
     // This ensures the modal animation/rendering has started
     await this.page.waitForSelector('[role="dialog"]', { state: 'visible', timeout: 10000 })
       .catch(() => console.log('Dialog role not found, waiting directly for input...'));
-    
+
     // 3. NOW wait specifically for the Name textbox inside the modal to be visible
     await this.tenantNameInput.waitFor({ state: 'visible', timeout: 15000 });
-    
+
     // 4. Clear and fill (doing it directly here to avoid base class timeout issues)
     await this.tenantNameInput.clear();
     await this.tenantNameInput.fill(tenantName);
-    
+
     // 5. Click Save
     const saveButton = this.page.getByRole('button', { name: 'Save' });
     await saveButton.click();
-    
+
     // 6. Wait for "Saving..." text to disappear from the DOM
     await this.page.waitForFunction(
       () => !document.body.textContent?.includes('Saving...'),
@@ -47,7 +47,7 @@ export class AuthLoginPage extends BasePage {
     ).catch(() => {
       console.log('Warning: Saving timeout - continuing anyway');
     });
-    
+
     // 7. Wait for modal to fully close and UI to settle
     await this.page.waitForTimeout(500);
   }
@@ -56,21 +56,21 @@ export class AuthLoginPage extends BasePage {
     // Wait for login form to be ready
     await this.usernameInput.waitFor({ state: 'visible', timeout: 10000 });
     await this.passwordInput.waitFor({ state: 'visible', timeout: 5000 });
-    
+
     // Clear and fill directly to control timeouts
     await this.usernameInput.clear();
     await this.usernameInput.fill(username);
-    
+
     await this.passwordInput.clear();
     await this.passwordInput.fill(password);
-    
+
     // Handle Remember Me if visible
     if (await this.rememberMeText.isVisible().catch(() => false)) {
       await this.rememberMeText.click();
     }
-    
+
     await Promise.all([
-      this.page.waitForURL(/storefront/i, { timeout: 90000 }),
+      this.page.waitForURL(/storefront|ControlRoom/i, { timeout: 90000 }),
       this.loginButton.click(),
     ]);
   }
@@ -86,7 +86,7 @@ export class AuthLoginPage extends BasePage {
     // Check if the tenant is already set to the target tenant to avoid redundant modals and timeouts
     const tenantLabel = this.page.locator('strong');
     const currentTenant = await tenantLabel.first().textContent().catch(() => '');
-    
+
     if (currentTenant?.trim().toLowerCase() !== tenantName.toLowerCase()) {
       if (await this.switchLink.isVisible({ timeout: 3000 }).catch(() => false)) {
         await this.switchTenant(tenantName);
@@ -94,7 +94,14 @@ export class AuthLoginPage extends BasePage {
     } else {
       console.log(`✅ Tenant is already set to "${tenantName}". Skipping switch.`);
     }
-    
+
     await this.login(username, password);
+
+    // Dismiss cookie banner if it appears after login
+    const cookieBtn = this.page.locator('button:has-text("Accept"), button:has-text("I Agree")').first();
+    if (await cookieBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await cookieBtn.click();
+      console.log(' Global cookie banner accepted.');
+    }
   }
 }

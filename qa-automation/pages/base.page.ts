@@ -1,12 +1,33 @@
-import { Page, Locator } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 
 export class BasePage {
   protected page: Page;
   protected baseUrl: string;
 
-  constructor(page: Page, baseUrl: string) {
+  constructor(page: Page, baseUrl: string = '') {
     this.page = page;
     this.baseUrl = baseUrl;
+  }
+
+  async waitForLoaders(timeout = 60000) {
+    const loaders = this.page.locator('.ta-stage-loading, #ta-doc-review-loading, #pkg-viewer-loading, .abp-block-area, .abp-block-area-busy');
+    await expect(loaders).toHaveCount(0, { timeout }).catch(() => {});
+  }
+
+  async safeClick(locator: Locator, timeout: number = 10000): Promise<boolean> {
+    if (await locator.isVisible({ timeout }).catch(() => false)) {
+      await locator.click({ force: true }).catch(() => {});
+      return true;
+    }
+    return false;
+  }
+
+  async safeHover(locator: Locator, timeout: number = 10000): Promise<boolean> {
+    if (await locator.isVisible({ timeout }).catch(() => false)) {
+      await locator.hover({ force: true }).catch(() => {});
+      return true;
+    }
+    return false;
   }
 
   async goto(path: string = '', queryParams?: Record<string, string>): Promise<void> {
