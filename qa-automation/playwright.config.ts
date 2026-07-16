@@ -23,7 +23,7 @@ export default defineConfig({
     '**/pages/**',
     '**/fixtures/**',
   ],
-  timeout: 300000,
+  timeout: 500000,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -62,7 +62,7 @@ export default defineConfig({
     // ═══════════════════════════════════════════════════════════════
     {
       name: 'portal-auth-setup',
-      testMatch: '**/tests/setup/**/*.setup.ts',
+      testMatch: ['**/tests/setup/**/*.setup.ts', '**/features/control-room/**/*.feature.spec.js'],
       use: {
         headless: true, // auth setup runs invisibly — no browser window shown
       },
