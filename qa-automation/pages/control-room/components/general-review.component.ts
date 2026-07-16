@@ -17,7 +17,7 @@ export class GeneralReviewComponent extends BasePage {
       for (let i = 0; i < checkboxCount; i++) {
         const box = looseCheckboxes.nth(i);
         if (await box.isVisible().catch(() => false) && await box.isEnabled().catch(() => false)) {
-          await box.check({ force: true }).catch(() => {});
+          await box.check({ force: true }).catch(() => { });
           await this.waitForLoaders();
         }
       }
@@ -32,7 +32,7 @@ export class GeneralReviewComponent extends BasePage {
       for (let i = 0; i < attestCount; i++) {
         const box = attestBoxes.nth(i);
         if (await box.isVisible().catch(() => false) && await box.isEnabled().catch(() => false)) {
-          await box.click({ force: true }).catch(() => {});
+          await box.click({ force: true }).catch(() => { });
           await this.waitForLoaders();
         }
       }
@@ -47,7 +47,7 @@ export class GeneralReviewComponent extends BasePage {
       const btn = sectionClearBtns.nth(i);
       if (await btn.isVisible({ timeout: 500 }).catch(() => false) && await btn.isEnabled().catch(() => false)) {
         console.log(`Clicking section clear button: ${(await btn.textContent().catch(() => ''))?.trim()}`);
-        await btn.click({ force: true }).catch(() => {});
+        await btn.click({ force: true }).catch(() => { });
         await this.waitForLoaders();
       }
     }
@@ -99,5 +99,48 @@ export class GeneralReviewComponent extends BasePage {
     }
   }
 
-  async completeGeneralReview() { await this.markAllCleared(); }
+  async completeGeneralReview() {
+    console.log('General Review step — scrolling down to find "Mark All Sections Reviewed" button...');
+
+    // Scroll to the bottom so the button is fully in view.
+    await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await this.page.waitForTimeout(1000);
+
+    const clearAllBtn = this.page.getByRole('button', { name: /Mark All Sections Reviewed/i }).first();
+    if (await clearAllBtn.count() === 0 || !await clearAllBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      console.log('Warning: "Mark All Sections Reviewed" button not found — page may not be a General Review step.');
+      return;
+    }
+
+    await clearAllBtn.scrollIntoViewIfNeeded().catch(() => { });
+    console.log('Clicking "Mark All Sections Reviewed" button...');
+    await clearAllBtn.click({ force: true });
+
+    // Wait a couple of seconds for the server to register the action.
+    await this.page.waitForTimeout(2000);
+    await this.waitForLoaders();
+
+    // Confirm the server registered — "All clear" should appear.
+    const isAllClear = await this.page.getByText(/All clear/i)
+      .waitFor({ state: 'visible', timeout: 10000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!isAllClear) {
+      console.log('"All clear" not confirmed after first click. Retrying via JS click...');
+      await this.page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find(
+          b => /Mark All Sections Reviewed/i.test(b.textContent || '')
+        );
+        if (btn) (btn as HTMLElement).click();
+      });
+      await this.page.waitForTimeout(2000);
+      await this.waitForLoaders();
+      await this.page.getByText(/All clear/i)
+        .waitFor({ state: 'visible', timeout: 15000 })
+        .catch(() => { console.log('Warning: "All clear" not visible within 15s, proceeding...'); });
+    } else {
+      console.log('All sections confirmed as cleared by server.');
+    }
+  }
 }

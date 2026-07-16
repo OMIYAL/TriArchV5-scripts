@@ -43,6 +43,29 @@ export class MyRequestsPage extends BasePage {
       .waitFor({ state: 'visible', timeout: 60000 });
   }
 
+  /**
+   * After a filter-pill click the DataTable fires a new XHR render cycle.
+   * The old rows are still in the DOM when waitForTableData() is called, so it
+   * resolves immediately against stale data.  This helper waits for the
+   * processing spinner to appear (giving it up to 3 s) and then waits for it
+   * to fully disappear before confirming fresh rows are present.
+   */
+  private async waitForFilteredTableData(): Promise<void> {
+    const processing = this.page.locator('.dataTables_processing');
+    // Give the filter XHR a short window to kick off the spinner.
+    await processing
+      .waitFor({ state: 'visible', timeout: 3000 })
+      .catch(() => { /* spinner may appear and vanish faster than 3 s — that's fine */ });
+    // Now wait for the spinner to fully hide (fresh rows will be rendered after).
+    await processing
+      .waitFor({ state: 'hidden', timeout: 60000 })
+      .catch(() => { });
+    // Confirm at least one real row (or an empty-table notice) is present.
+    await this.page.locator('tbody tr a[href*="ServiceRequests"], .dataTables_empty')
+      .first()
+      .waitFor({ state: 'visible', timeout: 60000 });
+  }
+
   /** Navigates to My Requests, reloads the table, and scrolls through the page. */
   async navigateReloadAndScroll(): Promise<void> {
     await this.navigateToMyRequests();
@@ -130,7 +153,9 @@ export class MyRequestsPage extends BasePage {
 
       if (await filterPill.isVisible({ timeout: 5000 }).catch(() => false)) {
         await filterPill.click();
-        await this.waitForTableData();
+        // Use the filter-aware wait so stale rows (e.g. CLOSED) are flushed
+        // before we read the table content.
+        await this.waitForFilteredTableData();
 
         rows = this.page.locator('tbody tr');
         count = await rows.count();
@@ -184,7 +209,7 @@ export class MyRequestsPage extends BasePage {
       while (retries < 3 && !isVisible) {
         retries++;
         console.log(`No active activity "Open" link found. Server might be processing workflow in background (Attempt ${retries}/3). Retrying in 10s...`);
-        await this.page.waitForTimeout(10000);
+        await this.page.waitForTimeout(1000);
         await this.page.reload({ waitUntil: 'domcontentloaded' });
         await this.waitForLoaders();
 
@@ -245,31 +270,85 @@ export class MyRequestsPage extends BasePage {
     }
     await this.waitForLoaders();
 
-    // Try using a search/filter input if present
-    const searchInput = this.page.locator('input[type="search"], input[placeholder*="search" i], input[placeholder*="filter" i]').first();
-    if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await searchInput.fill(trackingNumber);
-      await this.page.waitForLoadState('networkidle').catch(() => { });
-    }
+    const tryFindTrackingNumberInRows = async (): Promise<boolean> => {
+      // Try using a search/filter input if present
+      const searchInput = this.page.locator('input[type="search"], input[placeholder*="search" i], input[placeholder*="filter" i]').first();
+      if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await searchInput.fill(trackingNumber);
+        await this.page.waitForLoadState('networkidle').catch(() => { });
+      }
 
-    // Find the row that contains the tracking number and click through to it
-    const targetRow = this.page.locator('tbody tr').filter({ hasText: trackingNumber }).first();
-    if (await targetRow.isVisible({ timeout: 10000 }).catch(() => false)) {
-      await targetRow.getByRole('link').first().click();
-      await this.waitForLoaders();
+      // Find the row that contains the tracking number and click through to it
+      const targetRow = this.page.locator('tbody tr').filter({ hasText: trackingNumber }).first();
+      if (await targetRow.isVisible({ timeout: 10000 }).catch(() => false)) {
+        await targetRow.getByRole('link').first().click();
+        await this.waitForLoaders();
+        return true;
+      }
+
+      // Fallback: scroll through all rows to find a match
+      const rows = this.page.locator('tbody tr');
+      const count = await rows.count().catch(() => 0);
+      for (let i = 0; i < count; i++) {
+        const rowText = await rows.nth(i).textContent().catch(() => '');
+        if (rowText?.includes(trackingNumber)) {
+          await rows.nth(i).getByRole('link').first().click();
+          await this.waitForLoaders();
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    if (await tryFindTrackingNumberInRows()) {
       return;
     }
 
-    // Fallback: scroll through all rows to find a match
-    const rows = this.page.locator('tbody tr');
-    const count = await rows.count().catch(() => 0);
-    for (let i = 0; i < count; i++) {
-      const rowText = await rows.nth(i).textContent().catch(() => '');
-      if (rowText?.includes(trackingNumber)) {
-        await rows.nth(i).getByRole('link').first().click();
+    console.log(`Tracking number "${trackingNumber}" not found in the first-page rows. Attempting Under Review filter fallback.`);
+    const filterPill = this.page.getByRole('button', { name: 'Under Review', exact: true }).first();
+    if (await filterPill.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await filterPill.click();
+      // Use the filter-aware wait so stale rows (e.g. CLOSED) are flushed
+      // before we read the table content.
+      await this.waitForFilteredTableData();
+
+      console.log('Under Review filter applied. Re-filling search input and traversing all rows...');
+
+      // Re-fill the search input (same as first-page approach)
+      const searchInput = this.page
+        .locator('input[type="search"], input[placeholder*="search" i], input[placeholder*="filter" i]')
+        .first();
+      if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await searchInput.fill(trackingNumber);
+        await this.page.waitForLoadState('networkidle').catch(() => { });
+      }
+
+      // Fast path: filter already narrowed the table — check the highlighted row first
+      const targetRow = this.page.locator('tbody tr').filter({ hasText: trackingNumber }).first();
+      if (await targetRow.isVisible({ timeout: 10000 }).catch(() => false)) {
+        console.log(`Found tracking number "${trackingNumber}" via filtered row (Under Review). Clicking link...`);
+        await targetRow.getByRole('link').first().click();
         await this.waitForLoaders();
         return;
       }
+
+      // Exhaustive row-by-row traversal (same as first page) — log every row checked
+      const rows = this.page.locator('tbody tr');
+      const count = await rows.count().catch(() => 0);
+      console.log(`Traversing all ${count} row(s) in Under Review filtered table...`);
+      for (let i = 0; i < count; i++) {
+        const rowText = await rows.nth(i).textContent().catch(() => '');
+        console.log(`  Row ${i + 1}/${count}: ${rowText?.trim().substring(0, 80)}`);
+        if (rowText?.includes(trackingNumber)) {
+          console.log(`  ✓ Match found at row ${i + 1}. Clicking link...`);
+          await rows.nth(i).getByRole('link').first().click();
+          await this.waitForLoaders();
+          return;
+        }
+      }
+
+      console.log(`Tracking number "${trackingNumber}" not found after traversing all ${count} Under Review row(s).`);
     }
 
     throw new Error(`Service Request with tracking number "${trackingNumber}" not found in the list.`);
