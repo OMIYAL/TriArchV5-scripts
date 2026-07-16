@@ -52,7 +52,7 @@ export class AuthLoginPage extends BasePage {
     await this.page.waitForTimeout(500);
   }
 
-  async login(username: string, password: string): Promise<void> {
+  async login(username: string, password: string, redirectUrlRegex: RegExp = /storefront|ControlRoom/i): Promise<void> {
     // Wait for login form to be ready
     await this.usernameInput.waitFor({ state: 'visible', timeout: 10000 });
     await this.passwordInput.waitFor({ state: 'visible', timeout: 5000 });
@@ -69,16 +69,17 @@ export class AuthLoginPage extends BasePage {
       await this.rememberMeText.click();
     }
 
-    await Promise.all([
-      this.page.waitForURL(/storefront|ControlRoom/i, { timeout: 90000 }),
-      this.loginButton.click(),
-    ]);
+    // MyDay / storefront keep streaming widgets, so waitUntil:'load' never settles after OIDC.
+    // Wait for URL match on domcontentloaded so login does not hang on an already-landed portal.
+    await this.loginButton.click();
+    await this.page.waitForURL(redirectUrlRegex, { timeout: 90000, waitUntil: 'domcontentloaded' });
   }
 
   async completeLoginFlow(
     tenantName: string,
     username: string,
-    password: string
+    password: string,
+    redirectUrlRegex: RegExp = /storefront|ControlRoom/i
   ): Promise<void> {
     await this.page.waitForLoadState('domcontentloaded');
     await this.usernameInput.waitFor({ state: 'visible', timeout: 30000 });
@@ -95,7 +96,7 @@ export class AuthLoginPage extends BasePage {
       console.log(`✅ Tenant is already set to "${tenantName}". Skipping switch.`);
     }
 
-    await this.login(username, password);
+    await this.login(username, password, redirectUrlRegex);
 
     // Dismiss cookie banner if it appears after login
     const cookieBtn = this.page.locator('button:has-text("Accept"), button:has-text("I Agree")').first();

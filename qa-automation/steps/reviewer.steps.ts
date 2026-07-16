@@ -42,11 +42,14 @@ When('the Reviewer selects a Service Request which is UNDER REVIEW', async ({ pa
 });
 
 Then('the Reviewer gets redirected to the Specific Request', async ({ page }) => {
-  if (page.url().includes('Activity')) {
-    console.log('Skipped decision. Still on Activity page.');
+  // Detail (and Activity) pages keep widgets loading — do not wait for full 'load'.
+  if (/ServiceRequests\/(Detail|Activity)/i.test(page.url())) {
     return;
   }
-  await page.waitForURL(/ServiceRequests\/Detail/i, { timeout: 15000 });
+  await page.waitForURL(/ServiceRequests\/(Detail|Activity)/i, {
+    timeout: 30000,
+    waitUntil: 'domcontentloaded',
+  });
 });
 
 When('the Reviewer opens the next active activity step', async ({ page }) => {

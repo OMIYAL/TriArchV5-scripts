@@ -19,21 +19,36 @@ export class MyRequestsPage extends BasePage {
   }
 
   async navigateToMyRequests() {
-    await expect(this.serviceRequestsLink).toBeVisible();
+    // Already on the list — avoid re-clicking the sidebar link (SPA remount can drop the table briefly).
+    if (/ControlRoom\/ServiceRequests\/?(\?|$)/i.test(this.page.url())) {
+      return;
+    }
+    await expect(this.serviceRequestsLink).toBeVisible({ timeout: 15000 });
     await this.serviceRequestsLink.click();
+    await this.page.waitForURL(/ServiceRequests/i, { timeout: 30000, waitUntil: 'domcontentloaded' });
   }
 
   async waitForListToLoad() {
-    await expect(this.reloadTableButton.first()).toBeVisible();
+    await expect(this.reloadTableButton.first()).toBeVisible({ timeout: 30000 });
+  }
+
+  /** Waits until DataTables finishes loading (not the transient "Loading..." / Processing row). */
+  private async waitForTableData(): Promise<void> {
+    await this.page.locator('.dataTables_processing')
+      .waitFor({ state: 'hidden', timeout: 60000 })
+      .catch(() => { });
+    // Prefer a real request link — "Loading..." rows have no tracking-number link.
+    await this.page.locator('tbody tr a[href*="ServiceRequests"], .dataTables_empty')
+      .first()
+      .waitFor({ state: 'visible', timeout: 60000 });
   }
 
   /** Navigates to My Requests, reloads the table, and scrolls through the page. */
   async navigateReloadAndScroll(): Promise<void> {
     await this.navigateToMyRequests();
-    await this.page.waitForURL(/ServiceRequests/i, { timeout: 15000 });
     await this.waitForListToLoad();
-    await this.reloadTableButton.click();
-    await this.page.waitForLoadState('networkidle').catch(() => { });
+    await this.reloadTableButton.first().click();
+    await this.waitForTableData();
     await scrollFromTop(this.page);
   }
 
@@ -101,7 +116,9 @@ export class MyRequestsPage extends BasePage {
     for (let i = 0; i < count; i++) {
       const row = rows.nth(i);
       const text = await row.textContent();
-      if (text && (text.includes('UNDER REVIEW') || text.includes('PENDING PAYMENT'))) {
+      // Prefer UNDER REVIEW over PENDING PAYMENT — payment-hold SRs often land on Fee
+      // with canSubmit=false until payment/waiver, which is a weaker reviewer path.
+      if (text && text.includes('UNDER REVIEW')) {
         targetLink = row.getByRole('link').first();
         break;
       }
@@ -109,12 +126,11 @@ export class MyRequestsPage extends BasePage {
 
     if (!targetLink) {
       console.log('No UNDER REVIEW rows found immediately. Clicking "Under Review" filter...');
-      const filterPill = this.page.getByText('Under Review', { exact: true }).first();
+      const filterPill = this.page.getByRole('button', { name: 'Under Review', exact: true }).first();
 
       if (await filterPill.isVisible({ timeout: 5000 }).catch(() => false)) {
         await filterPill.click();
-        await this.page.waitForLoadState('networkidle');
-        await this.page.waitForTimeout(1000); // Wait for table to reload
+        await this.waitForTableData();
 
         rows = this.page.locator('tbody tr');
         count = await rows.count();
@@ -131,6 +147,10 @@ export class MyRequestsPage extends BasePage {
 
     if (targetLink && await targetLink.isVisible().catch(() => false)) {
       await targetLink.click();
+      await this.page.waitForURL(/ServiceRequests\/(Detail|Activity)/i, {
+        timeout: 30000,
+        waitUntil: 'domcontentloaded',
+      });
     } else {
       throw new Error('No service requests found with status UNDER REVIEW.');
     }
@@ -165,8 +185,7 @@ export class MyRequestsPage extends BasePage {
         retries++;
         console.log(`No active activity "Open" link found. Server might be processing workflow in background (Attempt ${retries}/3). Retrying in 10s...`);
         await this.page.waitForTimeout(10000);
-        await this.page.reload();
-        await this.page.waitForLoadState('domcontentloaded');
+        await this.page.reload({ waitUntil: 'domcontentloaded' });
         await this.waitForLoaders();
 
         if (await this.page.getByText(/State Machine.*Closed/i).isVisible({ timeout: 2000 }).catch(() => false)) {
@@ -182,7 +201,18 @@ export class MyRequestsPage extends BasePage {
     if (isVisible) {
       // Extended timeout: staging can take 10-20s to respond to navigation
       await openLink.click({ timeout: 60000 });
+      await this.page.waitForURL(/ServiceRequests\/Activity/i, {
+        timeout: 60000,
+        waitUntil: 'domcontentloaded',
+      }).catch(() => { });
       await this.waitForLoaders();
+      // Activity pages load their verdict script after navigation — wait for the header button
+      // so submitDecision does not race an empty detail shell.
+      await this.page.locator('#ActivityVerdictButton')
+        .waitFor({ state: 'visible', timeout: 30000 })
+        .catch(() => {
+          console.log('Warning: #ActivityVerdictButton not visible after opening activity.');
+        });
       return true;
     }
 
@@ -210,7 +240,9 @@ export class MyRequestsPage extends BasePage {
   /** Navigates to Service Requests and opens the SR matching the given tracking number. */
   async navigateToRequestByTrackingNumber(trackingNumber: string): Promise<void> {
     await this.navigateToMyRequests();
-    await this.page.waitForURL(/ServiceRequests/i, { timeout: 15000 });
+    if (!/ServiceRequests/i.test(this.page.url())) {
+      await this.page.waitForURL(/ServiceRequests/i, { timeout: 30000, waitUntil: 'domcontentloaded' });
+    }
     await this.waitForLoaders();
 
     // Try using a search/filter input if present

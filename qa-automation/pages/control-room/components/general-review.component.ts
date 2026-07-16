@@ -23,8 +23,37 @@ export class GeneralReviewComponent extends BasePage {
       }
     }
 
+    // Fee / Issuance criterion checklists use button attest boxes (.js-attest), not checkboxes.
+    // Skip disabled ones (e.g. payment_reconciled while awaiting payment — those are resolved via Waive fee).
+    const attestBoxes = this.page.locator('.ta-activity-shell button.js-attest[aria-pressed="false"]:not([disabled])');
+    const attestCount = await attestBoxes.count();
+    if (attestCount > 0) {
+      console.log(`Found ${attestCount} unattested criterion boxes. Clicking them...`);
+      for (let i = 0; i < attestCount; i++) {
+        const box = attestBoxes.nth(i);
+        if (await box.isVisible().catch(() => false) && await box.isEnabled().catch(() => false)) {
+          await box.click({ force: true }).catch(() => {});
+          await this.waitForLoaders();
+        }
+      }
+    }
+
+    // Issuance / section-level clear buttons (e.g. "Mark section reviewed", "Output package reviewed")
+    const sectionClearBtns = this.page.getByRole('button', {
+      name: /Mark section reviewed|Output package reviewed/i,
+    });
+    const sectionClearCount = await sectionClearBtns.count();
+    for (let i = 0; i < sectionClearCount; i++) {
+      const btn = sectionClearBtns.nth(i);
+      if (await btn.isVisible({ timeout: 500 }).catch(() => false) && await btn.isEnabled().catch(() => false)) {
+        console.log(`Clicking section clear button: ${(await btn.textContent().catch(() => ''))?.trim()}`);
+        await btn.click({ force: true }).catch(() => {});
+        await this.waitForLoaders();
+      }
+    }
+
     // If sections are already cleared, skip to avoid double-submit concurrency conflicts.
-    if (await this.page.getByText(/All clear/i).isVisible({ timeout: 3000 }).catch(() => false)) {
+    if (await this.page.getByText(/All clear|Positive decision unlocked/i).isVisible({ timeout: 3000 }).catch(() => false)) {
       console.log('Sections are already all clear. Skipping "Mark All Sections Reviewed" button click.');
       return;
     }

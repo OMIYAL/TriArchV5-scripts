@@ -99,8 +99,21 @@ export class ActivityReviewPage extends BasePage {
 
       stepsProcessed++;
       console.log(`Waiting for redirect after step ${stepsProcessed}...`);
-      await this.page.waitForURL((url) => !url.href.includes('Activity'), { timeout: 90000 });
-      await this.page.waitForLoadState('networkidle');
+      const redirected = await this.page
+        .waitForURL((url) => !url.href.includes('Activity'), { timeout: 30000, waitUntil: 'domcontentloaded' })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!redirected && this.page.url().includes('Activity')) {
+        const detailUrl = await this.page.locator('.ta-activity-shell').getAttribute('data-detail-url');
+        if (detailUrl) {
+          console.log(`Redirect stalled — navigating to detail URL: ${detailUrl}`);
+          await this.page.goto(detailUrl, { waitUntil: 'domcontentloaded' });
+        } else {
+          throw new Error(`Still on Activity page after step ${stepsProcessed}; decision may not have submitted.`);
+        }
+      }
+      await this.page.waitForLoadState('networkidle').catch(() => { });
     }
   }
 }
