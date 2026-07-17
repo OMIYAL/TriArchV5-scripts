@@ -9,7 +9,7 @@ Feature: Dual-reviewer workflow where two reviewers split the activity steps
     And Reviewer 1 logs in with Reviewer 1 credentials
     Then the Reviewer gets redirected to home page dashboard
     When the Reviewer navigates to the Service Requests page
-    And the Reviewer selects a Service Request which is UNDER REVIEW
+    And the Reviewer selects a multi-reviewer Service Request which is UNDER REVIEW
     Then the Reviewer gets redirected to the Specific Request
     When Reviewer 1 processes the first 3 activity steps and captures the tracking number
 

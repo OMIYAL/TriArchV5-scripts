@@ -38,7 +38,10 @@ When('the Reviewer navigates to the Service Requests page', async ({ page }) => 
 
 When('the Reviewer selects a Service Request which is UNDER REVIEW', async ({ page }) => {
   const requestsPage = new MyRequestsPage(page);
-  await requestsPage.selectActiveRequest();
+  // requireSingleReviewer=true: skip any SR assigned to more than one reviewer,
+  // since the active activity step won't be available for this reviewer until
+  // the other reviewer completes their parallel step first.
+  await requestsPage.selectActiveRequest(true);
 });
 
 Then('the Reviewer gets redirected to the Specific Request', async ({ page }) => {

@@ -2,6 +2,7 @@ Feature: Citizen creates New Permit Project in the Storefront
 
   Background:
     Given the citizen is on the Storefront home page
+    When the citizen clicks on the Log in button
     And the citizen logs in with valid credentials
 
   @citizen @storefront @smoke
