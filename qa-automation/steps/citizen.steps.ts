@@ -23,7 +23,8 @@ Given('the citizen is on the Storefront home page', async ({ page }) => {
 });
 
 Given('the operator has started Mimik recording', async ({ page }) => {
-  // No-op for normal smoke/CI. Only pauses during npm run test:guide.
+  // No-op for normal smoke/CI. Only pauses during npm run test:guide
+  // (fixture sets MIMIK_GUIDE=1 when project is guide-mimik).
   if (process.env.MIMIK_GUIDE !== '1') {
     return;
   }
@@ -66,7 +67,11 @@ When('the citizen logs in with valid credentials', async ({ page }) => {
       process.env.CITIZEN_USERNAME || '',
       process.env.CITIZEN_PASSWORD || '',
     );
-    await page.waitForURL(/storefront/i, { timeout: 90000 });
+    const afterLoginWait =
+      process.env.MIMIK_GUIDE === '1'
+        ? { timeout: 90000, waitUntil: 'commit' as const }
+        : { timeout: 90000 };
+    await page.waitForURL(/storefront/i, afterLoginWait);
   }
 
   if (!page.url().includes('/services/Apply') && targetServiceUrl) {

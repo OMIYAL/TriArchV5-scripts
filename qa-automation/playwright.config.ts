@@ -81,13 +81,12 @@ export default defineConfig({
     },
 
     {
+      // Run only via: npm run test:guide  (or --project=guide-mimik)
+      // Excluded from default npm test / test:bdd / test:smoke scripts.
       name: 'guide-mimik',
       // Mimik capture adds per-click delay; allow longer waits than smoke.
       timeout: 600000,
-      testMatch:
-        process.env.MIMIK_GUIDE === '1'
-          ? ['**/features/storefront/**/*.feature.spec.js']
-          : ['**/__mimik_guide_disabled__/**'],
+      testMatch: ['**/features/storefront/**/*.feature.spec.js'],
       use: {
         headless: false,
         viewport: null,

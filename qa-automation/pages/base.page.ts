@@ -15,7 +15,20 @@ export class BasePage {
       const params = new URLSearchParams(queryParams).toString();
       url += `?${params}`;
     }
+    // Mimik's all_urls content script can delay/block the full "load" event.
+    if (process.env.MIMIK_GUIDE === '1') {
+      await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
+      return;
+    }
     await this.page.goto(url);
+  }
+
+  /** waitForURL options — under Mimik, stop at commit so we don't hang on "load". */
+  protected urlWait(timeout: number = 60000): { timeout: number; waitUntil?: 'commit' } {
+    if (process.env.MIMIK_GUIDE === '1') {
+      return { timeout, waitUntil: 'commit' };
+    }
+    return { timeout };
   }
 
   async waitForNetworkIdle(timeout: number = 5000): Promise<void> {
@@ -25,7 +38,7 @@ export class BasePage {
   }
 
   async waitForUrl(pattern: string | RegExp, timeout: number = 30000): Promise<void> {
-    await this.page.waitForURL(pattern, { timeout });
+    await this.page.waitForURL(pattern, this.urlWait(timeout));
   }
 
   getCurrentUrl(): string {
