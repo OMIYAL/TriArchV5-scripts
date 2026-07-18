@@ -446,4 +446,86 @@ export class MyRequestsPage extends BasePage {
 
     throw new Error(`Service Request with tracking number "${trackingNumber}" not found in the list.`);
   }
+
+  /**
+   * Navigates to Service Requests, finds a "Pending Intake" SR that still has
+   * at least one unassigned activity step (AssignReviewer button visible),
+   * and opens it.  Used by the Coordinator assignment flows.
+   *
+   * Mirrors the existing scanAndSelect() pattern from selectActiveRequest().
+   */
+  async findAndOpenPendingIntakeSR(): Promise<void> {
+    await this.navigateReloadAndScroll();
+    const visited = new Set<string>();
+
+    const scanAndOpen = async (): Promise<boolean> => {
+      const rows = this.page.locator('tbody tr');
+      const count = await rows.count();
+
+      for (let i = 0; i < count; i++) {
+        const row = rows.nth(i);
+        const text = await row.textContent().catch(() => '');
+        if (!text?.includes('PENDING INTAKE')) continue;
+
+        const link = row.getByRole('link').first();
+        const href = await link.getAttribute('href').catch(() => null);
+        if (!href || visited.has(href)) continue;
+        if (!await link.isVisible().catch(() => false)) continue;
+
+        visited.add(href);
+        await link.click();
+        await this.page.waitForURL(/ServiceRequests\/Detail/i, {
+          timeout: 30000,
+          waitUntil: 'domcontentloaded',
+        });
+
+        // A Pending Intake SR is usable by the Coordinator if:
+        //   (a) it still has unassigned steps  — assign + launch flow, OR
+        //   (b) all steps are already assigned — only launch flow (e.g. previous run
+        //       completed assignment but did not reach the launch step).
+        // Reject only if neither button is present (SR is in an unexpected state).
+        const hasUnassigned = await this.page
+          .locator('button.js-assign-reviewer')
+          .first()
+          .isVisible({ timeout: 5000 })
+          .catch(() => false);
+
+        const canLaunch = await this.page
+          .locator('button.js-launch-review-mirror')
+          .first()
+          .isVisible({ timeout: 5000 })
+          .catch(() => false);
+
+        if (hasUnassigned) {
+          console.log(`✅ Pending Intake SR with unassigned steps opened: ${href}`);
+          return true;
+        }
+
+        if (canLaunch) {
+          console.log(`✅ Pending Intake SR fully assigned (ready to launch): ${href}`);
+          return true;
+        }
+
+        console.log(`⏭ SR is not actionable by Coordinator (${href}). Going back...`);
+        await this.page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        await this.waitForTableData();
+        return scanAndOpen(); // recurse; visited Set prevents re-clicking
+      }
+
+      return false; // All Pending Intake rows on this page exhausted
+    };
+
+    if (await scanAndOpen()) return;
+
+    // Fallback: apply the "Pending Intake" filter pill and scan again
+    console.log('No suitable Pending Intake SR found in default view. Applying filter...');
+    const pill = this.page.getByRole('button', { name: 'Pending Intake', exact: true }).first();
+    if (await pill.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await pill.click();
+      await this.waitForFilteredTableData();
+      if (await scanAndOpen()) return;
+    }
+
+    throw new Error('No actionable Pending Intake Service Request found (needs unassigned steps or a ready-to-launch state).');
+  }
 }
