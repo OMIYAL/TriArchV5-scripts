@@ -23,12 +23,19 @@ export class PackagingComponent extends BasePage {
     if (await this.safeClick(mergeBtn, 3000)) {
       await this.waitForLoaders();
 
-      for (const name of [/Save & Next/i, /^Next$/]) {
-        const btn = this.page.getByRole('button', { name }).first();
-        if (await this.safeClick(btn, 3000)) {
-          await this.waitForLoaders();
-          await this.page.waitForLoadState('networkidle').catch(() => { });
-        }
+      // Tab 2: Edit & Organize -> Save & Next
+      const saveNextBtn = this.page.locator('#pkg-next-btn');
+      if (await saveNextBtn.isVisible({ timeout: 10000 }).catch(() => false)) {
+        await saveNextBtn.click({ force: true });
+        await this.waitForLoaders();
+      }
+
+      // Tab 3: Finalize -> Next
+      const finalizeNextBtn = this.page.locator('#pkg-finalize-next');
+      if (await finalizeNextBtn.isVisible({ timeout: 15000 }).catch(() => false)) {
+        await finalizeNextBtn.click({ force: true });
+        await this.waitForLoaders();
+        await this.page.waitForLoadState('networkidle').catch(() => { });
       }
     }
   }

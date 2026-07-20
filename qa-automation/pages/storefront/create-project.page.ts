@@ -181,6 +181,15 @@ export class CreateProjectPage {
       const contactPanel = this.page.locator('#AddContactPanel.show, #AddContactPanel.offcanvas.show').last();
       await contactPanel.waitFor({ state: 'visible', timeout: 10000 });
 
+      // Role is a custom combobox — click to open, then pick the first option (Project owner)
+      const roleCombobox = contactPanel.locator('[role="combobox"]').first();
+      await roleCombobox.waitFor({ state: 'visible', timeout: 5000 });
+      await roleCombobox.click({ force: true });
+      await this.page.waitForTimeout(500); // allow options list to render
+      const ownerOption = contactPanel.locator('div.custom-option, [role="option"]').filter({ hasText: 'Project owner' }).first();
+      await ownerOption.waitFor({ state: 'visible', timeout: 5000 });
+      await ownerOption.click({ force: true });
+
       await contactPanel.locator('#Input_FullName').fill(faker.person.fullName());
       await contactPanel.locator('#Input_Organisation').fill(faker.company.name());
       await contactPanel.locator('#Input_Email').fill(faker.internet.email());
@@ -188,6 +197,7 @@ export class CreateProjectPage {
 
       const saveContactButton = contactPanel.locator('button.btn-primary').filter({ hasText: /Add contact/i }).last();
       await saveContactButton.click({ force: true });
+
 
       await contactPanel.waitFor({ state: 'hidden', timeout: 15000 }).catch(async () => {
         await this.page.keyboard.press('Escape').catch(() => { });

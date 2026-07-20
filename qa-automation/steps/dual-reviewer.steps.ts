@@ -1,6 +1,7 @@
 import { createBdd } from 'playwright-bdd';
 import { AuthLoginPage } from '../pages/auth-login.page';
 import { MyRequestsPage } from '../pages/storefront/my-requests.page';
+import { SRDetailPage } from '../pages/sr-detail.page';
 import { ActivityReviewPage } from '../pages/control-room/activity-review.page';
 import { Page } from '@playwright/test';
 
@@ -43,37 +44,26 @@ When('the Reviewer selects a multi-reviewer Service Request which is UNDER REVIE
 
 When('Reviewer 1 processes the first 3 activity steps and captures the tracking number', async ({ page }) => {
   const myRequestsPage = new MyRequestsPage(page);
+  const srDetailPage = new SRDetailPage(page);
   const activityPage = new ActivityReviewPage(page);
-
-  // We are already on the SR detail page — save the URL before any account switch
   const srUrl = page.url();
 
   // Check whether the first ACTIVE step is blocked for Reviewer 1
-  // (i.e. it is assigned to Reviewer 2, so no "Open" link is rendered for us)
-  const blockingReviewer = await myRequestsPage.getActiveStepAssignedReviewer();
+  const blockingReviewer = await srDetailPage.getActiveStepAssignedReviewer();
   const reviewer2Username = (process.env.REVIEWER2_USERNAME || '').toLowerCase();
 
   if (blockingReviewer && blockingReviewer.toLowerCase().includes(reviewer2Username)) {
     console.log(`Active step blocked — assigned to "${blockingReviewer}". Switching to Reviewer 2 to unblock...`);
-
-    // Switch to Reviewer 2 and navigate directly to the same SR
     await loginToPortal(page, process.env.REVIEWER2_USERNAME || '', process.env.REVIEWER2_PASSWORD || '');
     await page.goto(srUrl, { waitUntil: 'domcontentloaded' });
-
-    // Let Reviewer 2 process only the steps that are currently blocking Reviewer 1.
-    // processActivities will stop naturally when no more Open links are visible for R2.
     await activityPage.processActivities(new MyRequestsPage(page));
-
     console.log('Reviewer 2 unblocking steps complete. Switching back to Reviewer 1...');
-
-    // Switch back to Reviewer 1 and return to the same SR
     await loginToPortal(page, process.env.REVIEWER1_USERNAME || '', process.env.REVIEWER1_PASSWORD || '');
     await page.goto(srUrl, { waitUntil: 'domcontentloaded' });
   }
 
-  // Reviewer 1 now processes their activity steps (up to 3)
   await activityPage.processActivities(myRequestsPage, 3);
-  capturedTrackingNumber = await myRequestsPage.getTrackingNumber();
+  capturedTrackingNumber = await srDetailPage.getTrackingNumber();
   console.log(`Reviewer 1 done. Tracking number: "${capturedTrackingNumber}"`);
 });
 
