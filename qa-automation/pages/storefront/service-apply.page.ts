@@ -43,14 +43,19 @@ export class ServiceApplyPage extends BasePage {
   /** Poll all tabs — avoids Promise.race rejecting when popup never fires under Mimik. */
   private async waitForCreateProjectPage(timeout = 90000): Promise<{ kind: 'popup' | 'sameTab'; page: Page }> {
     const deadline = Date.now() + timeout;
+    const applyPage = this.page;
 
     while (Date.now() < deadline) {
       const found = this.findCreateProjectPage();
       if (found) {
-        const kind = found === this.page ? 'sameTab' : 'popup';
-        return { kind, page: found };
+        if (found === applyPage) {
+          return { kind: 'sameTab', page: found };
+        }
+        return { kind: 'popup', page: found };
       }
-      await this.page.waitForTimeout(400);
+
+      // Apply tab may close when Create opens in a popup — do not call waitForTimeout on a closed page.
+      await new Promise((resolve) => setTimeout(resolve, 400));
     }
 
     const openUrls = this.page

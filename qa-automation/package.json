@@ -11,6 +11,7 @@
         "test:api-contact": "npm run oas:gherkin && bddgen && playwright test --project=api-control-room",
         "test:headed": "playwright test --headed --project=storefront-chromium --project=portal-chromium --project=e2e-full-flow --project=api-control-room",
         "test:guide": "bddgen && playwright test --project=guide-mimik --headed",
+        "mimik:patch": "node scripts/mimik/apply-mimik-patch.mjs",
         "test:dev": "playwright test --project=storefront-chromium --no-deps",
         "test:dev:headed": "playwright test --project=storefront-chromium --no-deps --headed",
         "test:smoke": "playwright test --grep @smoke --project=storefront-chromium --project=portal-chromium --project=e2e-full-flow",
