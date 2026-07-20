@@ -10,6 +10,7 @@ import { generateDynamicProjectData, DynamicProjectData } from '../utils/data-ge
 import { fillApplicantFields } from '../utils/form-fill.helper';
 import { closeSelect2Dropdown } from '../utils/select2.helper';
 import { isMimikGuideMode } from '../utils/mimik.helper';
+import { guideClick } from '../utils/mimik-action.helper';
 
 let targetServiceUrl = '';
 let currentProjectData: DynamicProjectData | null = null;
@@ -138,13 +139,13 @@ When('completes all required form steps and checklists', async ({ page }) => {
       }
 
       if (await nextButton.isVisible().catch(() => false)) {
-        await nextButton.click({ force: true });
-        await page.waitForLoadState('networkidle');
+        await guideClick(page, nextButton);
+        await page.waitForLoadState('networkidle').catch(() => {});
         continue;
       }
 
       if (await submitButton.isVisible().catch(() => false)) {
-        await submitButton.click({ force: true });
+        await guideClick(page, submitButton);
         await payButton.waitFor({ state: 'visible', timeout: 30000 }).catch(() => {});
         return;
       }
@@ -173,10 +174,10 @@ When('completes all required form steps and checklists', async ({ page }) => {
 
     // Click Next
     if (await nextButton.isVisible().catch(() => false)) {
-      await nextButton.click({ force: true });
+      await guideClick(page, nextButton);
       await page.waitForTimeout(2000);
     } else if (await submitButton.isVisible().catch(() => false)) {
-      await submitButton.click({ force: true });
+      await guideClick(page, submitButton);
       await payButton.waitFor({ state: 'visible', timeout: 30000 }).catch(() => {});
       return;
     }
@@ -197,7 +198,7 @@ When('completes the intake fee payment via Stripe if required', async ({ page })
   }
 
   const popupPromise = page.waitForEvent('popup', { timeout: 8000 }).catch(() => null);
-  await payButton.click({ force: true });
+  await guideClick(page, payButton, { force: true });
   const popup = await popupPromise;
 
   const stripePage = popup || page;

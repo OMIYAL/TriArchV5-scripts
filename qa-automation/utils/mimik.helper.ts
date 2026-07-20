@@ -28,13 +28,29 @@ export function getMimikExportFormat(): MimikExportFormat {
 
 /** Pause between Playwright ops in guide mode so Mimik can screenshot (see MIMIK_CAPTURE_DELAY_MS). */
 export function getMimikCaptureDelayMs(): number {
-  const raw = Number(process.env.MIMIK_CAPTURE_DELAY_MS ?? 800);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 800;
+  const raw = Number(process.env.MIMIK_CAPTURE_DELAY_MS ?? 1200);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 1200;
 }
 
 export function getMimikExportSettleMs(): number {
-  const raw = Number(process.env.MIMIK_EXPORT_SETTLE_MS ?? 5000);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 5000;
+  const raw = Number(process.env.MIMIK_EXPORT_SETTLE_MS ?? 8000);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 8000;
+}
+
+/** Wait after an action so Mimik can capture screenshot + element bounds. */
+export async function waitForMimikCapture(page?: Page): Promise<void> {
+  if (!isMimikGuideMode()) {
+    return;
+  }
+  const ms = getMimikCaptureDelayMs();
+  if (ms <= 0) {
+    return;
+  }
+  if (page) {
+    await page.waitForTimeout(ms).catch(() => sleep(ms));
+  } else {
+    await sleep(ms);
+  }
 }
 
 const EXPORT_LABELS: Record<MimikExportFormat, string> = {
@@ -121,6 +137,14 @@ export class MimikHelper {
 
     // Allow guide title / step list + in-flight screenshot writes to settle.
     await fullview.waitForTimeout(getMimikExportSettleMs());
+
+    await fullview
+      .locator('img[src^="blob:"]')
+      .first()
+      .waitFor({ state: 'visible', timeout: 60000 })
+      .catch(() => {});
+
+    await fullview.bringToFront();
 
     const exportButton = fullview.getByRole('button', { name: 'Export' });
     await exportButton.waitFor({ state: 'visible', timeout: 60000 });

@@ -2,7 +2,7 @@ import { Page, Locator } from '@playwright/test';
 import { BasePage } from '../base.page';
 import { CreateProjectPage } from './create-project.page';
 import { DocumentUploadComponent } from './document-upload.component';
-
+import { guideClick } from '../../utils/mimik-action.helper';
 const CREATE_PROJECT_URL = /PermitProjects\/Create/i;
 
 export class ServiceApplyPage extends BasePage {
@@ -88,7 +88,7 @@ export class ServiceApplyPage extends BasePage {
     await createControl.waitFor({ state: 'visible', timeout: 45000 });
     await createControl.scrollIntoViewIfNeeded();
 
-    await createControl.click();
+    await guideClick(this.page, createControl);
 
     const target = await this.waitForCreateProjectPage(90000);
 
@@ -146,7 +146,7 @@ export class ServiceApplyPage extends BasePage {
       }
 
       await combobox.scrollIntoViewIfNeeded();
-      await combobox.click({ force: true });
+      await guideClick(this.page, combobox);
 
       const projectOption = this.page.getByRole('option', { name: new RegExp(projectName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first();
       const found = await projectOption.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false);
@@ -170,6 +170,6 @@ export class ServiceApplyPage extends BasePage {
   }
 
   async clickPayIntakeFee(): Promise<void> {
-    await this.payIntakeFeeButton.click({ force: true });
+    await guideClick(this.page, this.payIntakeFeeButton, { force: true });
   }
 }

@@ -27,5 +27,5 @@ test.use({
 });
 
 const bddFileMeta = {
-  "Citizen selects a service, logs in, creates a project, and submits a service request": {"pickleLocation":"4:3","tags":["@citizen","@storefront","@smoke"],"ownTags":["@smoke","@storefront","@citizen"]},
+  "Citizen selects a service, logs in, creates a project, and submits a service request": {"pickleLocation":"3:3","tags":["@citizen","@storefront","@smoke"],"ownTags":["@smoke","@storefront","@citizen"]},
 };

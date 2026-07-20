@@ -3,6 +3,7 @@ import { faker } from '@faker-js/faker';
 import { DynamicProjectData } from '../../utils/data-generator.helper';
 import { getRandomDocumentTitle, getRandomTestPdf } from '../../utils/document.helper';
 import { clickSelect2Option, closeSelect2Dropdown } from '../../utils/select2.helper';
+import { guideClick, guideType } from '../../utils/mimik-action.helper';
 
 export class CreateProjectPage {
   private readonly page: Page;
@@ -78,7 +79,7 @@ export class CreateProjectPage {
     await next.waitFor({ state: 'visible', timeout: 15000 });
     await next.scrollIntoViewIfNeeded();
     await this.page.waitForTimeout(300);
-    await next.click({ force: true });
+    await guideClick(this.page, next);
     await this.page.waitForTimeout(1500);
   }
 
@@ -86,7 +87,7 @@ export class CreateProjectPage {
     const createBtn = this.page.getByRole('button', { name: /Create project/i });
     await createBtn.waitFor({ state: 'visible', timeout: 15000 });
     await createBtn.scrollIntoViewIfNeeded();
-    await createBtn.click({ force: true });
+    await guideClick(this.page, createBtn);
 
     await this.page.waitForURL(
       (url) => /services\/Apply|PermitProjects/i.test(url.href),
@@ -97,15 +98,15 @@ export class CreateProjectPage {
 
   private async fillProjectDetailsStep(data: DynamicProjectData): Promise<void> {
     await this.projectNameInput.waitFor({ state: 'visible', timeout: 45000 });
-    await this.projectNameInput.fill(data.name);
-    await this.streetAddressInput.fill(data.streetAddress);
-    await this.cityInput.fill(data.city);
-    await this.stateInput.fill(data.state);
-    await this.postalCodeInput.fill(data.postalCode);
+    await guideType(this.page, this.projectNameInput, data.name);
+    await guideType(this.page, this.streetAddressInput, data.streetAddress);
+    await guideType(this.page, this.cityInput, data.city);
+    await guideType(this.page, this.stateInput, data.state);
+    await guideType(this.page, this.postalCodeInput, data.postalCode);
 
     const parcelInput = this.page.getByRole('textbox', { name: /Parcel Number/i });
     if (await parcelInput.isVisible({ timeout: 500 }).catch(() => false)) {
-      await parcelInput.fill(faker.string.numeric(10));
+      await guideType(this.page, parcelInput, faker.string.numeric(10));
     }
 
     await this.selectJurisdiction(data);
@@ -118,13 +119,13 @@ export class CreateProjectPage {
     await this.selectLabeledCombobox(/Sprinkler Coverage/i, data.sprinklerCoverage);
 
     if (await this.grossSquareFootageInput.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await this.grossSquareFootageInput.fill(data.grossSquareFootage);
+      await guideType(this.page, this.grossSquareFootageInput, data.grossSquareFootage);
     }
     if (await this.heightInput.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await this.heightInput.fill(data.height);
+      await guideType(this.page, this.heightInput, data.height);
     }
     if (await this.numberOfFloorsInput.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await this.numberOfFloorsInput.fill(data.numberOfFloors);
+      await guideType(this.page, this.numberOfFloorsInput, data.numberOfFloors);
     }
   }
 
@@ -134,7 +135,7 @@ export class CreateProjectPage {
 
     await closeSelect2Dropdown(this.page);
     await this.jurisdictionCombobox.scrollIntoViewIfNeeded();
-    await this.jurisdictionCombobox.click({ force: true });
+    await guideClick(this.page, this.jurisdictionCombobox);
 
     const options = this.page.locator('.select2-container--open [role="option"]:not([aria-disabled="true"]):not(.loading-results)');
     await options.first().waitFor({ state: 'visible', timeout: 12000 });
@@ -157,7 +158,7 @@ export class CreateProjectPage {
     const currentText = (await combobox.innerText().catch(() => '') ?? '').trim();
     if (currentText && !/select|choose/i.test(currentText)) return;
 
-    await combobox.click({ force: true });
+    await guideClick(this.page, combobox);
     const preferred = preferredValue ? new RegExp(preferredValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : undefined;
     await clickSelect2Option(this.page, preferred, 10000);
     await closeSelect2Dropdown(this.page);
@@ -177,18 +178,18 @@ export class CreateProjectPage {
 
     try {
       await addContact.scrollIntoViewIfNeeded();
-      await addContact.click({ force: true });
+      await guideClick(this.page, addContact);
 
       const contactPanel = this.page.locator('#AddContactPanel.show, #AddContactPanel.offcanvas.show').last();
       await contactPanel.waitFor({ state: 'visible', timeout: 10000 });
 
-      await contactPanel.locator('#Input_FullName').fill(faker.person.fullName());
-      await contactPanel.locator('#Input_Organisation').fill(faker.company.name());
-      await contactPanel.locator('#Input_Email').fill(faker.internet.email());
-      await contactPanel.locator('#Input_Phone').fill(faker.string.numeric(10));
+      await guideType(this.page, contactPanel.locator('#Input_FullName'), faker.person.fullName());
+      await guideType(this.page, contactPanel.locator('#Input_Organisation'), faker.company.name());
+      await guideType(this.page, contactPanel.locator('#Input_Email'), faker.internet.email());
+      await guideType(this.page, contactPanel.locator('#Input_Phone'), faker.string.numeric(10));
 
       const saveContactButton = contactPanel.locator('button.btn-primary').filter({ hasText: /Add contact/i }).last();
-      await saveContactButton.click({ force: true });
+      await guideClick(this.page, saveContactButton);
 
       await contactPanel.waitFor({ state: 'hidden', timeout: 15000 }).catch(async () => {
         await this.page.keyboard.press('Escape').catch(() => { });

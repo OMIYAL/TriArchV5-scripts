@@ -1,5 +1,7 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { BasePage } from './base.page';
+import { guideClick, guideType } from '../utils/mimik-action.helper';
+import { isMimikGuideMode } from '../utils/mimik.helper';
 
 export class AuthLoginPage extends BasePage {
   private readonly switchLink: Locator;
@@ -31,14 +33,16 @@ export class AuthLoginPage extends BasePage {
     
     // 3. NOW wait specifically for the Name textbox inside the modal to be visible
     await this.tenantNameInput.waitFor({ state: 'visible', timeout: 15000 });
-    
-    // 4. Clear and fill (doing it directly here to avoid base class timeout issues)
-    await this.tenantNameInput.clear();
-    await this.tenantNameInput.fill(tenantName);
-    
-    // 5. Click Save
+
+    if (isMimikGuideMode()) {
+      await guideType(this.page, this.tenantNameInput, tenantName);
+    } else {
+      await this.tenantNameInput.clear();
+      await this.tenantNameInput.fill(tenantName);
+    }
+
     const saveButton = this.page.getByRole('button', { name: 'Save' });
-    await saveButton.click();
+    await guideClick(this.page, saveButton);
     
     // 6. Wait for "Saving..." text to disappear from the DOM
     await this.page.waitForFunction(
@@ -58,20 +62,23 @@ export class AuthLoginPage extends BasePage {
     await this.passwordInput.waitFor({ state: 'visible', timeout: 5000 });
     
     // Clear and fill directly to control timeouts
-    await this.usernameInput.clear();
-    await this.usernameInput.fill(username);
-    
-    await this.passwordInput.clear();
-    await this.passwordInput.fill(password);
-    
-    // Handle Remember Me if visible
-    if (await this.rememberMeText.isVisible().catch(() => false)) {
-      await this.rememberMeText.click();
+    if (isMimikGuideMode()) {
+      await guideType(this.page, this.usernameInput, username);
+      await guideType(this.page, this.passwordInput, password);
+    } else {
+      await this.usernameInput.clear();
+      await this.usernameInput.fill(username);
+      await this.passwordInput.clear();
+      await this.passwordInput.fill(password);
     }
-    
+
+    if (await this.rememberMeText.isVisible().catch(() => false)) {
+      await guideClick(this.page, this.rememberMeText);
+    }
+
     await Promise.all([
       this.page.waitForURL(/storefront/i, { timeout: 90000 }),
-      this.loginButton.click(),
+      guideClick(this.page, this.loginButton),
     ]);
   }
 
