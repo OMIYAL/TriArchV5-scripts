@@ -49,8 +49,8 @@ export class PortalSRDetailPage extends BasePage {
 
       // Wait for the offcanvas body to slide open
       const offcanvasBody = this.page.locator('div.offcanvas-body').last();
-      await offcanvasBody.waitFor({ state: 'visible', timeout: 10000 });
-      await this.page.waitForTimeout(2000); // let offcanvas animation + initial list load settle
+      await offcanvasBody.waitFor({ state: 'visible', timeout: 15000 });
+      await this.page.waitForTimeout(4000); // let offcanvas animation + initial list load settle
 
       // Type the username into the search box — the server filters the list,
       // surfacing Reviewer3 / SandeepP without requiring virtual-list scrolling
@@ -79,8 +79,11 @@ export class PortalSRDetailPage extends BasePage {
 
       // Wait for offcanvas to fully close, then let the page re-render
       // activity steps before clicking the next AssignReviewer button
-      await offcanvasBody.waitFor({ state: 'hidden', timeout: 15000 }).catch(() => {});
-      await this.page.waitForTimeout(2000); // page re-renders assigned step chip
+      await offcanvasBody.waitFor({ state: 'hidden', timeout: 15000 }).catch(() => { });
+      await this.page.waitForTimeout(4000); // Increased to let page re-render assigned step chip safely
+      
+      const overlay = this.page.locator('div.abp-block-area.abp-block-area-busy');
+      await overlay.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => { });
 
       console.log(`  ✅ Step ${i + 1} assigned to "${reviewerUsername}"`);
     }
@@ -100,12 +103,12 @@ export class PortalSRDetailPage extends BasePage {
   async launchReview(): Promise<void> {
     // Scroll to top so both Launch Review buttons are accessible
     await this.page.evaluate(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
-    await this.page.waitForTimeout(500);
+    await this.page.waitForTimeout(3000);
 
     // Try the mirror button (Next Action panel) first;
     // fall back to the fixed top-right header button (#LaunchReviewButton)
-    const mirrorBtn  = this.page.locator('button.js-launch-review-mirror').first();
-    const headerBtn  = this.page.locator('button#LaunchReviewButton').first();
+    const mirrorBtn = this.page.locator('button.js-launch-review-mirror').first();
+    const headerBtn = this.page.locator('button#LaunchReviewButton').first();
 
     let clicked = false;
     if (await mirrorBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
@@ -133,8 +136,8 @@ export class PortalSRDetailPage extends BasePage {
 
     // Wait for the ABP loading overlay to appear then fully disappear
     const overlay = this.page.locator('div.abp-block-area.abp-block-area-busy');
-    await overlay.waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
-    await overlay.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => {});
+    await overlay.waitFor({ state: 'visible', timeout: 10000 }).catch(() => { });
+    await overlay.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => { });
 
     console.log('✅ Review launched — workflow is now active.');
   }

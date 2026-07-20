@@ -9,6 +9,7 @@ import { DocumentUploadComponent } from '../pages/storefront/document-upload.com
 import { generateDynamicProjectData, DynamicProjectData } from '../utils/data-generator.helper';
 import { fillApplicantFields } from '../utils/form-fill.helper';
 import { closeSelect2Dropdown } from '../utils/select2.helper';
+import { SharedState } from '../utils/shared-state';
 
 const { Given, When, Then } = createBdd();
 
@@ -208,5 +209,6 @@ Then('the tracking number and service request state should be saved', async ({ p
   const trackingNumber = trackingMatch ? trackingMatch[1].replace(/\s+/g, '') : 'not-found';
 
   console.log(`Tracking Number: ${trackingNumber}`);
+  SharedState.trackingNumber = trackingNumber;
   expect(trackingNumber).not.toBe('not-found');
 });

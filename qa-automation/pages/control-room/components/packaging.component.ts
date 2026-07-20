@@ -7,9 +7,14 @@ export class PackagingComponent extends BasePage {
   }
 
   async completePackaging() {
-    const mergeBtn = this.page.getByRole('button', { name: /Merge & Continue/i }).first();
-    if (!await mergeBtn.isVisible({ timeout: 2000 }).catch(() => false)) return;
+    // Quick exit if it's not a packaging step
+    // Check if the merge button is at least attached to the DOM (it may be hidden until boxes are checked)
+    const mergeBtn = this.page.locator('#pkg-merge-btn').first();
+    if (!await mergeBtn.waitFor({ state: 'attached', timeout: 3000 }).catch(() => false)) {
+      return; // Not a packaging step
+    }
 
+    // Tab 1: Source Files -> Check all boxes
     const checkboxes = this.page.locator('input[type="checkbox"]');
     const count = await checkboxes.count().catch(() => 0);
     for (let i = 0; i < count; i++) {
@@ -20,19 +25,21 @@ export class PackagingComponent extends BasePage {
       }
     }
 
-    if (await this.safeClick(mergeBtn, 3000)) {
+    // Now the merge button should be visible/enabled
+    if (await mergeBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await this.safeClick(mergeBtn, 3000);
       await this.waitForLoaders();
 
       // Tab 2: Edit & Organize -> Save & Next
       const saveNextBtn = this.page.locator('#pkg-next-btn');
-      if (await saveNextBtn.isVisible({ timeout: 10000 }).catch(() => false)) {
+      if (await saveNextBtn.isVisible({ timeout: 20000 }).catch(() => false)) {
         await saveNextBtn.click({ force: true });
         await this.waitForLoaders();
       }
 
       // Tab 3: Finalize -> Next
       const finalizeNextBtn = this.page.locator('#pkg-finalize-next');
-      if (await finalizeNextBtn.isVisible({ timeout: 15000 }).catch(() => false)) {
+      if (await finalizeNextBtn.isVisible({ timeout: 20000 }).catch(() => false)) {
         await finalizeNextBtn.click({ force: true });
         await this.waitForLoaders();
         await this.page.waitForLoadState('networkidle').catch(() => { });
