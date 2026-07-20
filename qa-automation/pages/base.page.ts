@@ -1,4 +1,5 @@
 import { Page, Locator } from '@playwright/test';
+import { isMimikGuideMode } from '../utils/mimik.helper';
 
 export class BasePage {
   protected page: Page;
@@ -16,7 +17,7 @@ export class BasePage {
       url += `?${params}`;
     }
     // Mimik's all_urls content script can delay/block the full "load" event.
-    if (process.env.MIMIK_GUIDE === '1') {
+    if (isMimikGuideMode()) {
       await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
       return;
     }
@@ -25,7 +26,7 @@ export class BasePage {
 
   /** waitForURL options — under Mimik, stop at commit so we don't hang on "load". */
   protected urlWait(timeout: number = 60000): { timeout: number; waitUntil?: 'commit' } {
-    if (process.env.MIMIK_GUIDE === '1') {
+    if (isMimikGuideMode()) {
       return { timeout, waitUntil: 'commit' };
     }
     return { timeout };

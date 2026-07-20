@@ -9,6 +9,7 @@ import { StripeCheckoutPage } from '../pages/stripe-checkout.page';
 import { generateDynamicProjectData, DynamicProjectData } from '../utils/data-generator.helper';
 import { fillApplicantFields } from '../utils/form-fill.helper';
 import { closeSelect2Dropdown } from '../utils/select2.helper';
+import { isMimikGuideMode } from '../utils/mimik.helper';
 
 let targetServiceUrl = '';
 let currentProjectData: DynamicProjectData | null = null;
@@ -20,19 +21,6 @@ let currentProjectData: DynamicProjectData | null = null;
 Given('the citizen is on the Storefront home page', async ({ page }) => {
   const storefrontHome = new StorefrontHomePage(page);
   await storefrontHome.navigate(process.env.TENANT_NAME || '');
-});
-
-Given('the operator has started Mimik recording', async ({ page }) => {
-  // No-op for normal smoke/CI. Only pauses during npm run test:guide
-  // (fixture sets MIMIK_GUIDE=1 when project is guide-mimik).
-  if (process.env.MIMIK_GUIDE !== '1') {
-    return;
-  }
-
-  console.log(
-    '\n>>> Mimik guide mode: open the Mimik side panel → Start Capture → click Resume in Playwright Inspector\n',
-  );
-  await page.pause();
 });
 
 Given('the citizen navigates to an available service', async ({ page }) => {
@@ -67,10 +55,9 @@ When('the citizen logs in with valid credentials', async ({ page }) => {
       process.env.CITIZEN_USERNAME || '',
       process.env.CITIZEN_PASSWORD || '',
     );
-    const afterLoginWait =
-      process.env.MIMIK_GUIDE === '1'
-        ? { timeout: 90000, waitUntil: 'commit' as const }
-        : { timeout: 90000 };
+    const afterLoginWait = isMimikGuideMode()
+      ? { timeout: 90000, waitUntil: 'commit' as const }
+      : { timeout: 90000 };
     await page.waitForURL(/storefront/i, afterLoginWait);
   }
 

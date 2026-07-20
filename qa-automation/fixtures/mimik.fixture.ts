@@ -1,7 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import { test as base, createBdd } from 'playwright-bdd';
-import { chromium, type Page } from '@playwright/test';
+import { chromium } from '@playwright/test';
+import {
+  getMimikCaptureDelayMs,
+  getMimikExportDir,
+  resetMimikSidepanel,
+} from '../utils/mimik.helper';
 
 /** Chrome/Chromium flag expects forward slashes on Windows. */
 function toChromiumPath(dir: string): string {
@@ -62,11 +67,7 @@ export const test = base.extend<object>({
       );
     }
 
-    const exportDir = path.resolve(
-      __dirname,
-      process.env.MIMIK_EXPORT_DIR?.trim() || '../mimik-exports',
-    );
-    fs.mkdirSync(exportDir, { recursive: true });
+    const exportDir = getMimikExportDir();
 
     // Fresh profile per run so TriArch auth cookies from a prior guide run
     // do not skip login and break the BDD flow.
@@ -77,11 +78,14 @@ export const test = base.extend<object>({
     );
     fs.mkdirSync(userDataDir, { recursive: true });
 
+    const captureDelayMs = getMimikCaptureDelayMs();
+
     const context = await chromium.launchPersistentContext(userDataDir, {
       channel: 'chromium',
       headless: false,
       viewport: null,
       acceptDownloads: true,
+      slowMo: captureDelayMs,
       baseURL: projectUse.baseURL as string | undefined,
       ignoreHTTPSErrors: Boolean(projectUse.ignoreHTTPSErrors),
       args: [
@@ -103,64 +107,14 @@ export const test = base.extend<object>({
       await context.newPage();
     }
 
-    // Playwright intercepts downloads via CDP; without saving them explicitly the
-    // file only exists in Playwright's internal temp folder (shown as a random
-    // UUID-named entry in Chrome's download tray) and is never reachable on disk.
-    const pendingDownloads: Promise<void>[] = [];
-    function attachDownloadHandler(page: Page) {
-      page.on('download', (download) => {
-        pendingDownloads.push(
-          (async () => {
-            const dest = path.join(exportDir, download.suggestedFilename());
-            try {
-              await download.saveAs(dest);
-              const { size } = fs.statSync(dest);
-              if (size === 0) {
-                console.error(
-                  `\n>>> Mimik export FAILED: ${dest} saved as 0 bytes.\n`,
-                );
-                return;
-              }
-              console.log(`\n>>> Mimik export saved: ${dest} (${size} bytes)\n`);
-            } catch (err) {
-              console.error(
-                `\n>>> Mimik export download failed to save: ${err instanceof Error ? err.message : err}\n`,
-              );
-            }
-          })(),
-        );
-      });
-    }
-    context.pages().forEach(attachDownloadHandler);
-    context.on('page', attachDownloadHandler);
-
+    // Export is saved in mimik.helper.ts stopAndExport() via await download.saveAs().
     console.log(`\n>>> Mimik exports will save to: ${exportDir}\n`);
+    console.log(`>>> Mimik capture delay (slowMo): ${captureDelayMs}ms\n`);
 
     try {
       await use(context);
-
-      const page =
-        context.pages().find((p) => !p.isClosed()) ?? context.pages()[0];
-      if (page && !page.isClosed()) {
-        console.log(
-          '\n>>> Guide run complete. In Mimik: Stop Capture → Export (PDF/HTML/Markdown).',
-        );
-        console.log(`>>> Files save to: ${exportDir}`);
-        console.log(
-          '>>> Click Resume in Playwright Inspector when export is done.\n',
-        );
-        await page.pause();
-      }
     } finally {
-      if (pendingDownloads.length > 0) {
-        console.log(
-          `\n>>> Waiting for ${pendingDownloads.length} download(s) to finish saving...\n`,
-        );
-        await Promise.race([
-          Promise.allSettled(pendingDownloads),
-          new Promise((resolve) => setTimeout(resolve, 30000)),
-        ]);
-      }
+      resetMimikSidepanel();
       await context.close();
       fs.rmSync(userDataDir, { recursive: true, force: true });
     }

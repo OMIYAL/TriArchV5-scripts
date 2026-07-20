@@ -3,9 +3,10 @@ import { BasePage } from '../base.page';
 import { CreateProjectPage } from './create-project.page';
 import { DocumentUploadComponent } from './document-upload.component';
 
+const CREATE_PROJECT_URL = /PermitProjects\/Create/i;
+
 export class ServiceApplyPage extends BasePage {
   private readonly projectCombobox: Locator;
-  private readonly createNewProjectLink: Locator;
   private readonly payIntakeFeeButton: Locator;
 
   constructor(page: Page) {
@@ -15,42 +16,87 @@ export class ServiceApplyPage extends BasePage {
       .getByRole('combobox', { name: /No project|project/i })
       .or(page.locator('#ProjectId'))
       .first();
-    this.createNewProjectLink = page.getByRole('link', { name: /Create a new project/i });
     this.payIntakeFeeButton = page.locator('#PayIntakeFeeButton');
   }
 
+  /** "+ New project" link/button — label varies by service skin. */
+  private createProjectControl(): Locator {
+    return this.page
+      .locator('a[href*="PermitProjects/Create"], a[href*="PermitProjects%2FCreate"]')
+      .or(this.page.getByRole('link', { name: /Create a new project|New project/i }))
+      .or(this.page.getByRole('button', { name: /New project/i }))
+      .first();
+  }
+
+  private findCreateProjectPage(): Page | null {
+    if (CREATE_PROJECT_URL.test(this.page.url())) {
+      return this.page;
+    }
+    for (const p of this.page.context().pages()) {
+      if (!p.isClosed() && CREATE_PROJECT_URL.test(p.url())) {
+        return p;
+      }
+    }
+    return null;
+  }
+
+  /** Poll all tabs — avoids Promise.race rejecting when popup never fires under Mimik. */
+  private async waitForCreateProjectPage(timeout = 90000): Promise<{ kind: 'popup' | 'sameTab'; page: Page }> {
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      const found = this.findCreateProjectPage();
+      if (found) {
+        const kind = found === this.page ? 'sameTab' : 'popup';
+        return { kind, page: found };
+      }
+      await this.page.waitForTimeout(400);
+    }
+
+    const openUrls = this.page
+      .context()
+      .pages()
+      .filter((p) => !p.isClosed())
+      .map((p) => p.url())
+      .join(' | ');
+
+    throw new Error(
+      `Create project page did not open within ${timeout}ms. ` +
+        `Apply tab: ${this.page.url()}. Open tabs: ${openUrls || '(none)'}`,
+    );
+  }
+
   async waitForProjectCombobox(): Promise<void> {
-    await this.projectCombobox.waitFor({ state: 'visible', timeout: 25000 });
+    await this.page
+      .waitForURL(/services\/Apply/i, this.urlWait(45000))
+      .catch(() => {});
+    await this.projectCombobox.waitFor({ state: 'visible', timeout: 45000 });
   }
 
   async openCreateProjectPopup(): Promise<CreateProjectPage> {
     // Service click / prior step sometimes already lands on Create (same tab).
-    if (/PermitProjects\/Create/i.test(this.page.url())) {
+    const existing = this.findCreateProjectPage();
+    if (existing) {
       console.log('Already on PermitProjects/Create — filling on current page (no popup).');
-      await this.page.waitForLoadState('domcontentloaded');
-      return new CreateProjectPage(this.page);
+      await existing.waitForLoadState('domcontentloaded').catch(() => {});
+      return new CreateProjectPage(existing);
     }
 
     await this.projectCombobox.waitFor({ state: 'visible', timeout: 45000 });
-    await this.createNewProjectLink.waitFor({ state: 'visible', timeout: 45000 });
 
-    // Mimik / STG may open Create in the same tab instead of a popup window.
-    const opened = Promise.race([
-      this.page
-        .waitForEvent('popup', { timeout: 60000 })
-        .then((popup) => ({ kind: 'popup' as const, page: popup })),
-      this.page
-        .waitForURL(/PermitProjects\/Create/i, { timeout: 60000 })
-        .then(() => ({ kind: 'sameTab' as const, page: this.page })),
-    ]);
+    const createControl = this.createProjectControl();
+    await createControl.waitFor({ state: 'visible', timeout: 45000 });
+    await createControl.scrollIntoViewIfNeeded();
 
-    await this.createNewProjectLink.click();
+    await createControl.click();
 
-    const target = await opened;
-    await target.page.waitForLoadState('domcontentloaded');
+    const target = await this.waitForCreateProjectPage(90000);
+
+    await target.page.bringToFront();
+    await target.page.waitForLoadState('domcontentloaded').catch(() => {});
+
     if (target.kind === 'popup') {
-      await target.page.bringToFront();
-      console.log('Create project opened in a popup window.');
+      console.log('Create project opened in a popup/new tab.');
     } else {
       console.log('Create project opened in the same tab (no popup).');
     }
