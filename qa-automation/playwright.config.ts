@@ -89,16 +89,10 @@ export default defineConfig({
       testMatch: ['**/features/storefront/**/*.feature.spec.js'],
       use: {
         headless: false,
-        // Fixture overrides this for guide runs; CI uses 1920x1080 in mimik.fixture.ts.
-        viewport: process.env.CI ? { width: 1920, height: 1080 } : null,
+        viewport: null,
         baseURL: process.env.STOREFRONT_BASE_URL,
         actionTimeout: 45000,
         navigationTimeout: 60000,
-        launchOptions: {
-          args: process.env.CI
-            ? ['--window-size=1920,1080', '--disable-popup-blocking']
-            : ['--start-maximized'],
-        },
       },
     },
 

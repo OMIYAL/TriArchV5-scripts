@@ -92,31 +92,10 @@ export class ServiceApplyPage extends BasePage {
     const createControl = this.createProjectControl();
     await createControl.waitFor({ state: 'visible', timeout: 45000 });
     await createControl.scrollIntoViewIfNeeded();
-    const href = await createControl.getAttribute('href').catch(() => null);
-    if (href && /PermitProjects/i.test(href)) {
-      const createUrl = new URL(href, this.page.url()).href;
-      console.log(`Opening create project via href (same tab): ${createUrl}`);
-      await this.page.goto(createUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      const sameTab = await this.waitForCreateProjectPage(30000);
-      await sameTab.page.bringToFront();
-      await sameTab.page.waitForLoadState('domcontentloaded').catch(() => {});
-      console.log('Create project opened in the same tab (href navigation).');
-      return new CreateProjectPage(sameTab.page);
-    }
 
     await guideClick(this.page, createControl);
 
-    let target: { kind: 'popup' | 'sameTab'; page: Page };
-    try {
-      target = await this.waitForCreateProjectPage(process.env.CI ? 45000 : 90000);
-    } catch (clickWaitError) {
-      // Last resort: click again with force, then wait a bit more.
-      console.log(
-        `Create project did not open after click (${String(clickWaitError)}). Retrying force click…`,
-      );
-      await guideClick(this.page, createControl, { force: true });
-      target = await this.waitForCreateProjectPage(30000);
-    }
+    const target = await this.waitForCreateProjectPage(90000);
 
     await target.page.bringToFront();
     await target.page.waitForLoadState('domcontentloaded').catch(() => {});
