@@ -8,8 +8,7 @@ import { Page } from '@playwright/test';
  */
 export async function waitForTableData(page: Page): Promise<void> {
   await page.locator('.dataTables_processing')
-    .waitFor({ state: 'hidden', timeout: 60000 })
-    .catch(() => {});
+    .waitFor({ state: 'hidden', timeout: 90000 });
   await page.locator('tbody tr a[href*="ServiceRequests"], .dataTables_empty')
     .first()
     .waitFor({ state: 'visible', timeout: 60000 });
@@ -26,8 +25,12 @@ export async function waitForTableData(page: Page): Promise<void> {
  */
 export async function waitForFilteredTableData(page: Page): Promise<void> {
   const processing = page.locator('.dataTables_processing');
-  await processing.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
-  await processing.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => {});
+  try {
+    await processing.waitFor({ state: 'visible', timeout: 3000 });
+  } catch (e) {
+    // Ignore: Processing spinner might appear and disappear faster than Playwright can catch it, or might not appear if cached.
+  }
+  await processing.waitFor({ state: 'hidden', timeout: 90000 });
   await page.locator('tbody tr a[href*="ServiceRequests"], .dataTables_empty')
     .first()
     .waitFor({ state: 'visible', timeout: 60000 });
