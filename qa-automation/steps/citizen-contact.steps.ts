@@ -7,7 +7,7 @@ const { When, Then } = createBdd();
 
 When('the user navigates to the Contact page', async ({ page }) => {
   await page.getByRole('link', { name: /Contact Us/i }).first().click();
-  await page.waitForLoadState('networkidle').catch(() => { });
+  await page.waitForLoadState('domcontentloaded');
 });
 
 
@@ -22,9 +22,11 @@ When('the user clicks the {string} button', async ({ page }, btnName: string) =>
 
 
 Then('the contact request is submitted successfully', async ({ page }) => {
-  await expect(page.getByText(/Thank you for contacting us|Message sent/i)).toBeVisible({ timeout: 15000 }).catch(() => {
-    console.log('Success validation fallback triggered. Exact text may need update.');
-  });
+  // FIX: this assertion previously had a .catch() that swallowed failure and just logged a
+  // message — meaning this step could NEVER fail the test, regardless of what the page
+  // actually showed. If the exact text needs updating, that should surface as a real
+  // assertion failure (with a clear diff) so it gets fixed, not silently pass forever.
+  await expect(page.getByText(/Thank you for contacting us|Message received/i)).toBeVisible({ timeout: 15000 });
 });
 
 Then('the {string} validation message is displayed', async ({ page }, validationMsg: string) => {

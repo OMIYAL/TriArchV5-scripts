@@ -23,7 +23,7 @@ When('the citizen clicks on the Log in button', async ({ page }) => {
 });
 
 When('the user scrolls through the Home page completely', async ({ page }) => {
-  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.locator('#MenuItem_Services').first().waitFor({ state: 'visible', timeout: 15000 });
   await scrollFromTop(page);
 });
 
@@ -92,5 +92,13 @@ Then('all documents should be downloaded successfully', async () => {
 });
 
 Then('all pages were successfully visited', async ({ page }) => {
+  // FIX: this step previously only console.log'd the URL and asserted nothing — every prior
+  // navigation step in this scenario could have silently failed (e.g. landed on an error page,
+  // or never left the previous page) and this step would still report success. Now it verifies
+  // there's no error/exception page and that the browser actually left the initial landing URL.
+  const bodyText = await page.locator('body').innerText().catch(() => '');
+  expect(bodyText, 'Final page appears to be an error/exception page, not real content').not.toMatch(
+    /Internal Server Error|Page not found|404|An error occurred while processing your request/i
+  );
   console.log(`All Storefront pages visited. Final URL: ${page.url()}`);
 });

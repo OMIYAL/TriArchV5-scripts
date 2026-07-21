@@ -19,25 +19,7 @@ function resolveReviewerUsername(label: string): string {
   return resolved;
 }
 
-// ─── Shared login helper (same pattern as dual-reviewer.steps.ts) ─────────────
-async function loginToPortal(page: Page, username: string, password: string): Promise<void> {
-  const portalUrl = process.env.PORTAL_BASE_URL || '';
-  const tenant = process.env.TENANT_NAME || 'fps';
-
-  // Clear session to avoid stale auth state from a previous test
-  await page.context().clearCookies();
-  await page.evaluate(() => {
-    try { localStorage.clear(); } catch { }
-    try { sessionStorage.clear(); } catch { }
-  });
-
-  await page.goto(`${portalUrl}?__tenant=${tenant}`);
-  const loginLink = page.getByRole('link', { name: /Log in|Sign in/i }).first();
-  await loginLink.waitFor({ state: 'visible', timeout: 20000 });
-  await loginLink.click();
-
-  await new AuthLoginPage(page).completeLoginFlow(tenant, username, password, /ControlRoom/i);
-}
+import { loginToPortal } from '../utils/auth.helper';
 
 // ─── Step definitions ─────────────────────────────────────────────────────────
 
