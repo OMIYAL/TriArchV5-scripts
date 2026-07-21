@@ -121,7 +121,14 @@ export class MimikHelper {
       })
       .catch(() => null);
 
-    await panel.getByRole('button', { name: 'Finish Recording' }).click();
+    const finishBtn = panel.getByRole('button', { name: /Finish Recording|Stop Recording/i });
+    await finishBtn.waitFor({ state: 'visible', timeout: 30000 });
+    await panel.bringToFront();
+    try {
+      await finishBtn.click({ timeout: 5000 });
+    } catch {
+      await finishBtn.click({ force: true, timeout: 10000 });
+    }
 
     let fullview = (await fullviewPromise) ?? findFullviewPage();
 

@@ -109,7 +109,8 @@ async function fillEmptyInputs(page: Page, projectData?: DynamicProjectData | nu
     if (isMimikGuideMode()) {
       await guideType(page, field, value).catch(async () => {
         await field.click({ force: true }).catch(() => {});
-        await field.pressSequentially(value, { delay: 50 }).catch(() => {});
+        await field.fill(value).catch(() => {});
+        await page.waitForTimeout(200).catch(() => {});
       });
     } else {
       await field.fill(value).catch(async () => {

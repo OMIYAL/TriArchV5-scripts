@@ -36,7 +36,6 @@ export async function guideClick(
   await waitForMimikCapture(page);
 }
 
-/** Mimik-friendly typing: click field first so bounds are captured, then type slowly. */
 export async function guideType(page: Page, locator: Locator, value: string): Promise<void> {
   await locator.waitFor({ state: 'visible', timeout: 15000 });
 
@@ -49,7 +48,6 @@ export async function guideType(page: Page, locator: Locator, value: string): Pr
   await page.bringToFront();
   await locator.scrollIntoViewIfNeeded();
   await locator.click();
-  await locator.clear();
-  await locator.pressSequentially(value, { delay: 50 });
+  await locator.fill(value);
   await waitForMimikCapture(page);
 }

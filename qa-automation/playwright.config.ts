@@ -26,7 +26,7 @@ export default defineConfig({
   timeout: 300000,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  retries: 0,
   workers: process.env.CI ? 1 : undefined,
 
   reporter: [
@@ -36,19 +36,9 @@ export default defineConfig({
 
   use: {
     actionTimeout: 15000,
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
-
-    // ─── Viewport & Window Size ──────────────────────────────────
-    // viewport: null means Playwright will NOT impose a fixed virtual
-    // canvas — the viewport size matches the actual browser window.
-    // Combined with --start-maximized, the window fills your physical
-    // screen and the viewport matches it exactly (no stretching).
-    //
-    // DO NOT set a fixed pixel size here (e.g. 1920x1080) unless your
-    // screen is actually that resolution — it causes the page to render
-    // wider than the window and everything gets clipped on the right.
     viewport: null,
 
     launchOptions: {
