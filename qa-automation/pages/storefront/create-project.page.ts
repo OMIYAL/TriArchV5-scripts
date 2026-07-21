@@ -2,7 +2,7 @@ import { Page, Locator } from '@playwright/test';
 import { faker } from '@faker-js/faker';
 import { DynamicProjectData } from '../../utils/data-generator.helper';
 import { getRandomDocumentTitle, getRandomTestPdf } from '../../utils/document.helper';
-import { clickSelect2Option, closeSelect2Dropdown, selectFromSelect2Combobox } from '../../utils/select2.helper';
+import { clickSelect2Option, closeSelect2Dropdown, waitForSelect2Results } from '../../utils/select2.helper';
 import { guideClick, guideType } from '../../utils/mimik-action.helper';
 
 export class CreateProjectPage {
@@ -133,31 +133,36 @@ export class CreateProjectPage {
     const selectedValue = await this.page.locator('#JurisdictionIdSelect').inputValue().catch(() => '');
     if (selectedValue) return;
 
+    const dropdownTimeout = process.env.CI ? 20000 : 12000;
+
     await closeSelect2Dropdown(this.page);
+    await this.jurisdictionCombobox.scrollIntoViewIfNeeded();
+    await guideClick(this.page, this.jurisdictionCombobox);
 
-    // Jurisdiction is an AJAX-searched select2 — a blank query can return zero
-    // results (especially on a fresh CI tenant), so type the jurisdiction name
-    // to trigger the server-side search instead of grabbing the first option.
-    let selected = await selectFromSelect2Combobox(this.page, this.jurisdictionCombobox, {
-      searchText: data.jurisdiction,
-      preferredName: data.jurisdiction,
-    });
+    let options = await waitForSelect2Results(this.page, dropdownTimeout);
+    let count = await options.count();
 
-    if (!selected) {
-      // Fall back to a blank-query open in case the search text itself matched nothing.
-      selected = await selectFromSelect2Combobox(this.page, this.jurisdictionCombobox, {});
+    if (count === 0) {
+      // Dropdown may not have actually opened (e.g. click landed elsewhere) — reopen and retry once.
+      await closeSelect2Dropdown(this.page);
+      await guideClick(this.page, this.jurisdictionCombobox, { force: true });
+      options = await waitForSelect2Results(this.page, dropdownTimeout);
+      count = await options.count();
     }
 
-    if (!selected) {
-      throw new Error(`Jurisdiction dropdown returned no selectable options (searched for "${data.jurisdiction}").`);
+    if (count === 0) {
+      throw new Error('Jurisdiction dropdown opened but returned zero selectable options.');
     }
+
+    const optionText = (await options.first().innerText().catch(() => '') ?? '').trim();
+    await options.first().click();
 
     await this.page.waitForFunction(() => {
       const el = document.querySelector('#JurisdictionIdSelect') as HTMLSelectElement | null;
       return !!el?.value;
     }, { timeout: 10000 });
 
-    const optionText = (await this.jurisdictionCombobox.innerText().catch(() => '') ?? '').trim();
+    await closeSelect2Dropdown(this.page);
     data.jurisdiction = optionText || data.jurisdiction;
   }
 
