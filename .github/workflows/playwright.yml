@@ -79,7 +79,7 @@ jobs:
           name: mimik-guide-pdf
           path: qa-automation/mimik-exports/
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 10
 
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -87,4 +87,4 @@ jobs:
           name: playwright-report
           path: qa-automation/playwright-report/
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 10

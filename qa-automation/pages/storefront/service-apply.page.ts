@@ -78,6 +78,16 @@ export class ServiceApplyPage extends BasePage {
     await this.projectCombobox.waitFor({ state: 'visible', timeout: 45000 });
   }
 
+  /** Build the absolute Create URL from the control's href, preserving __tenant. */
+  private resolveCreateUrlFromHref(href: string): string {
+    const createUrl = new URL(href, this.page.url());
+    const currentTenant = new URL(this.page.url()).searchParams.get('__tenant');
+    if (currentTenant && !createUrl.searchParams.has('__tenant')) {
+      createUrl.searchParams.set('__tenant', currentTenant);
+    }
+    return createUrl.href;
+  }
+
   async openCreateProjectPopup(): Promise<CreateProjectPage> {
     // Service click / prior step sometimes already lands on Create (same tab).
     const existing = this.findCreateProjectPage();
@@ -93,7 +103,57 @@ export class ServiceApplyPage extends BasePage {
     await createControl.waitFor({ state: 'visible', timeout: 45000 });
     await createControl.scrollIntoViewIfNeeded();
 
+    // Preferred path: the "+ New project" control is an anchor pointing at
+    // PermitProjects/Create. Popups are unreliable under the Mimik extension +
+    // xvfb (CI leaves an orphan about:blank tab), so navigate the apply tab
+    // directly whenever an href is available.
+    const href = await createControl.getAttribute('href').catch(() => null);
+    if (href && /PermitProjects(\/|%2F)Create/i.test(href)) {
+      const createUrl = this.resolveCreateUrlFromHref(href);
+      console.log(`Navigating directly to Create project page: ${createUrl}`);
+      await this.page.goto(createUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await this.page
+        .waitForURL(CREATE_PROJECT_URL, { timeout: 30000 })
+        .catch(() => {});
+
+      if (CREATE_PROJECT_URL.test(this.page.url())) {
+        await this.page.bringToFront();
+        return new CreateProjectPage(this.page);
+      }
+      console.log('Direct navigation did not land on Create — falling back to click.');
+    }
+
+    // Fallback: click the control and watch for either a popup or a same-tab nav.
+    const popupPromise = this.page
+      .waitForEvent('popup', { timeout: 15000 })
+      .catch(() => null);
+
     await guideClick(this.page, createControl);
+
+    const popup = await popupPromise;
+    if (popup) {
+      await popup.waitForLoadState('domcontentloaded').catch(() => {});
+      const reached = await popup
+        .waitForURL(CREATE_PROJECT_URL, { timeout: 30000 })
+        .then(() => true)
+        .catch(() => false);
+
+      // A blank/blocked popup is useless — recover by navigating it (or the
+      // apply tab) to the resolved Create URL instead of timing out.
+      if (!reached && href && /PermitProjects(\/|%2F)Create/i.test(href)) {
+        const createUrl = this.resolveCreateUrlFromHref(href);
+        const navPage = popup.isClosed() ? this.page : popup;
+        await navPage
+          .goto(createUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+          .catch(() => {});
+      }
+
+      if (!popup.isClosed() && CREATE_PROJECT_URL.test(popup.url())) {
+        await popup.bringToFront();
+        console.log('Create project opened in a popup/new tab.');
+        return new CreateProjectPage(popup);
+      }
+    }
 
     const target = await this.waitForCreateProjectPage(90000);
 
