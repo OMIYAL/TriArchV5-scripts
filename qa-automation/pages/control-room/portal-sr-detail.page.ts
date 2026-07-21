@@ -45,10 +45,21 @@ export class PortalSRDetailPage extends BasePage {
         break;
       }
 
-      await assignButtons.first().click();
+      const offcanvasBody = this.page.locator('div.offcanvas-body').last();
+
+      // If the page is still settling, the first click may be ignored.
+      // Retry the assignment click until the offcanvas opens.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await assignButtons.first().click();
+        const opened = await offcanvasBody.isVisible({ timeout: 1500 }).catch(() => false);
+        if (opened) {
+          break;
+        }
+        console.log(`  ↻ Offcanvas did not open on attempt ${attempt + 1}; retrying...`);
+        await this.page.waitForTimeout(500);
+      }
 
       // Wait for the offcanvas body to slide open
-      const offcanvasBody = this.page.locator('div.offcanvas-body').last();
       await offcanvasBody.waitFor({ state: 'visible', timeout: 15000 });
       await this.page.waitForTimeout(4000); // let offcanvas animation + initial list load settle
 
@@ -78,12 +89,15 @@ export class PortalSRDetailPage extends BasePage {
       await assignBtn.click();
 
       // Wait for offcanvas to fully close, then let the page re-render
-      // activity steps before clicking the next AssignReviewer button
+      // activity steps before clicking the next AssignReviewer button.
       await offcanvasBody.waitFor({ state: 'hidden', timeout: 15000 }).catch(() => { });
       await this.page.waitForTimeout(4000); // Increased to let page re-render assigned step chip safely
-      
+
       const overlay = this.page.locator('div.abp-block-area.abp-block-area-busy');
       await overlay.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => { });
+
+      // Give the page a brief moment to settle before the next assignment click.
+      await this.page.waitForTimeout(1300);
 
       console.log(`  ✅ Step ${i + 1} assigned to "${reviewerUsername}"`);
     }

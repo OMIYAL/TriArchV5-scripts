@@ -23,7 +23,7 @@ export default defineConfig({
     '**/pages/**',
     '**/fixtures/**',
   ],
-  timeout: 500000,
+  timeout: 700000,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

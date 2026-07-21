@@ -10,13 +10,15 @@ export class BasePage {
   }
 
   async waitForLoaders(timeout = 60000) {
-    const loaders = this.page.locator('.ta-stage-loading, #ta-doc-review-loading, #pkg-viewer-loading, .abp-block-area, .abp-block-area-busy');
-    await expect(loaders).toHaveCount(0, { timeout }).catch(() => {});
+    const loaders = this.page.locator(
+      '.ta-stage-loading, #ta-doc-review-loading, #pkg-viewer-loading, .abp-block-area, .abp-block-area-busy'
+    ).filter({ visible: true });
+    await expect(loaders).toHaveCount(0, { timeout }).catch(() => { });
   }
 
   async safeClick(locator: Locator, timeout: number = 10000): Promise<boolean> {
     if (await locator.isVisible({ timeout }).catch(() => false)) {
-      await locator.click({ force: true }).catch(() => {});
+      await locator.click({ force: true }).catch(() => { });
       return true;
     }
     return false;
@@ -24,7 +26,7 @@ export class BasePage {
 
   async safeHover(locator: Locator, timeout: number = 10000): Promise<boolean> {
     if (await locator.isVisible({ timeout }).catch(() => false)) {
-      await locator.hover({ force: true }).catch(() => {});
+      await locator.hover({ force: true }).catch(() => { });
       return true;
     }
     return false;
