@@ -9,15 +9,6 @@ on:
     paths:
       - 'qa-automation/**'
       - '.github/workflows/playwright.yml'
-  pull_request:
-    branches:
-      - main
-      - master
-      - feature/mimik
-    paths:
-      - 'qa-automation/**'
-      - '.github/workflows/playwright.yml'
-  workflow_dispatch:
 
 defaults:
   run:
