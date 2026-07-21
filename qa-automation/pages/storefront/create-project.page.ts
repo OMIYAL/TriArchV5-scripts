@@ -69,7 +69,6 @@ export class CreateProjectPage {
     await this.page.waitForURL(/projectId=/i, { timeout }).catch(() => {
       console.log('Project envelope URL not updated with projectId — continuing.');
     });
-    await this.page.waitForTimeout(500);
   }
 
   async clickNext(): Promise<void> {
@@ -77,22 +76,19 @@ export class CreateProjectPage {
     const next = this.page.getByRole('button', { name: 'Next', exact: true }).and(this.page.locator(':visible')).last();
     await next.waitFor({ state: 'visible', timeout: 15000 });
     await next.scrollIntoViewIfNeeded();
-    await this.page.waitForTimeout(300);
-    await next.click({ force: true });
-    await this.page.waitForTimeout(1500);
+    await next.click();
   }
 
   async clickCreateProject(): Promise<void> {
     const createBtn = this.page.getByRole('button', { name: /Create project/i });
     await createBtn.waitFor({ state: 'visible', timeout: 15000 });
     await createBtn.scrollIntoViewIfNeeded();
-    await createBtn.click({ force: true });
+    await createBtn.click();
 
     await this.page.waitForURL(
       (url) => /services\/Apply|PermitProjects/i.test(url.href),
       { timeout: 60000 },
     );
-    await this.page.waitForTimeout(1000);
   }
 
   async fillProjectDetailsStep(data: DynamicProjectData): Promise<void> {
@@ -108,7 +104,6 @@ export class CreateProjectPage {
     }
 
     await this.selectJurisdiction(data);
-    await this.page.waitForTimeout(400);
   }
 
   async fillBuildingCharacteristicsStep(data: DynamicProjectData): Promise<void> {
@@ -133,7 +128,7 @@ export class CreateProjectPage {
 
     await closeSelect2Dropdown(this.page);
     await this.jurisdictionCombobox.scrollIntoViewIfNeeded();
-    await this.jurisdictionCombobox.click({ force: true });
+    await this.jurisdictionCombobox.click();
 
     const options = this.page.locator('.select2-container--open [role="option"]:not([aria-disabled="true"]):not(.loading-results)');
     await options.first().waitFor({ state: 'visible', timeout: 12000 });
@@ -156,7 +151,7 @@ export class CreateProjectPage {
     const currentText = (await combobox.innerText().catch(() => '') ?? '').trim();
     if (currentText && !/select|choose/i.test(currentText)) return;
 
-    await combobox.click({ force: true });
+    await combobox.click();
     const preferred = preferredValue ? new RegExp(preferredValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : undefined;
     await clickSelect2Option(this.page, preferred, 10000);
     await closeSelect2Dropdown(this.page);
@@ -176,7 +171,7 @@ export class CreateProjectPage {
 
     try {
       await addContact.scrollIntoViewIfNeeded();
-      await addContact.click({ force: true });
+      await addContact.click();
 
       const contactPanel = this.page.locator('#AddContactPanel.show, #AddContactPanel.offcanvas.show').last();
       await contactPanel.waitFor({ state: 'visible', timeout: 10000 });
@@ -184,11 +179,10 @@ export class CreateProjectPage {
       // Role is a custom combobox — click to open, then pick the first option (Project owner)
       const roleCombobox = contactPanel.locator('[role="combobox"]').first();
       await roleCombobox.waitFor({ state: 'visible', timeout: 5000 });
-      await roleCombobox.click({ force: true });
-      await this.page.waitForTimeout(500); // allow options list to render
+      await roleCombobox.click();
       const ownerOption = contactPanel.locator('div.custom-option, [role="option"]').filter({ hasText: 'Project owner' }).first();
       await ownerOption.waitFor({ state: 'visible', timeout: 5000 });
-      await ownerOption.click({ force: true });
+      await ownerOption.click();
 
       await contactPanel.locator('#Input_FullName').fill(faker.person.fullName());
       await contactPanel.locator('#Input_Organisation').fill(faker.company.name());
@@ -196,16 +190,16 @@ export class CreateProjectPage {
       await contactPanel.locator('#Input_Phone').fill(faker.string.numeric(10));
 
       const saveContactButton = contactPanel.locator('button.btn-primary').filter({ hasText: /Add contact/i }).last();
-      await saveContactButton.click({ force: true });
+      await saveContactButton.click();
 
 
       await contactPanel.waitFor({ state: 'hidden', timeout: 15000 }).catch(async () => {
-        await this.page.keyboard.press('Escape').catch(() => { });
+        await this.page.keyboard.press('Escape');
       });
 
       this.contactAdded = true;
     } catch (err) {
-      await this.page.keyboard.press('Escape').catch(() => { });
+      await this.page.keyboard.press('Escape');
     }
   }
 

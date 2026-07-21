@@ -79,7 +79,7 @@ export class ServiceApplyPage extends BasePage {
       }
 
       await combobox.scrollIntoViewIfNeeded();
-      await combobox.click({ force: true });
+      await combobox.click();
 
       const projectOption = this.page.getByRole('option', { name: new RegExp(projectName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first();
       const found = await projectOption.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false);
@@ -90,7 +90,7 @@ export class ServiceApplyPage extends BasePage {
         break;
       }
 
-      await this.page.keyboard.press('Escape').catch(() => {});
+      await this.page.keyboard.press('Escape');
     }
 
     await this.page
@@ -103,6 +103,6 @@ export class ServiceApplyPage extends BasePage {
   }
 
   async clickPayIntakeFee(): Promise<void> {
-    await this.payIntakeFeeButton.click({ force: true });
+    await this.payIntakeFeeButton.click();
   }
 }

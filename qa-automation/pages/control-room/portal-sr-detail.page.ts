@@ -90,11 +90,11 @@ export class PortalSRDetailPage extends BasePage {
 
       // Wait for offcanvas to fully close, then let the page re-render
       // activity steps before clicking the next AssignReviewer button.
-      await offcanvasBody.waitFor({ state: 'hidden', timeout: 15000 }).catch(() => { });
+      await offcanvasBody.waitFor({ state: 'hidden', timeout: 30000 });
       await this.page.waitForTimeout(4000); // Increased to let page re-render assigned step chip safely
 
       const overlay = this.page.locator('div.abp-block-area.abp-block-area-busy');
-      await overlay.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => { });
+      await overlay.waitFor({ state: 'hidden', timeout: 30000 });
 
       // Give the page a brief moment to settle before the next assignment click.
       await this.page.waitForTimeout(1300);
@@ -150,8 +150,8 @@ export class PortalSRDetailPage extends BasePage {
 
     // Wait for the ABP loading overlay to appear then fully disappear
     const overlay = this.page.locator('div.abp-block-area.abp-block-area-busy');
-    await overlay.waitFor({ state: 'visible', timeout: 10000 }).catch(() => { });
-    await overlay.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => { });
+    await overlay.waitFor({ state: 'visible', timeout: 10000 });
+    await overlay.waitFor({ state: 'hidden', timeout: 60000 });
 
     console.log('✅ Review launched — workflow is now active.');
   }

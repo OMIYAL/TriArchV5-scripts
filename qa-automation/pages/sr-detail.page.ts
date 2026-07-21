@@ -34,7 +34,7 @@ export class SRDetailPage extends BasePage {
       tab = this.page.getByText(new RegExp(tabName, 'i')).first();
 
     if (await tab.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await tab.scrollIntoViewIfNeeded().catch(() => {});
+      await tab.scrollIntoViewIfNeeded();
       await tab.click();
       await this.page.waitForTimeout(1000);
     } else {
@@ -49,7 +49,7 @@ export class SRDetailPage extends BasePage {
     const downloads: unknown[] = [];
     for (let i = 0; i < count; i++) {
       const downloadPromise = this.page.waitForEvent('download', { timeout: 80000 });
-      await buttons.nth(i).click({ force: true });
+      await buttons.nth(i).click();
       downloads.push(await downloadPromise);
     }
     return downloads;

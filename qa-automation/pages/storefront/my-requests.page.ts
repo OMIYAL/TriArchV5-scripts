@@ -50,12 +50,10 @@ export class MyRequestsPage extends BasePage {
     await scrollFromTop(this.page);
   }
 
-  /** Selects a random Closed SR from the list. */
   async selectClosedRequest(): Promise<void> {
     await expect(this.page.getByRole('cell', { name: 'Closed' }).first()).toBeVisible();
     const closedRows = this.page.getByRole('row').filter({ hasText: 'Closed' });
-    const count = await closedRows.count();
-    await closedRows.nth(Math.floor(Math.random() * count)).getByRole('link').first().click();
+    await closedRows.first().getByRole('link').first().click();
   }
 
   /** Returns the number of `.ta-reviewer-chip` elements on the current SR detail page. */
@@ -111,7 +109,7 @@ export class MyRequestsPage extends BasePage {
 
         const reason = requireSingleReviewer ? 'Multi-reviewer' : 'Single-reviewer';
         console.log(`  ⏭ ${reason} SR skipped (${href}). Going back...`);
-        await this.page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        await this.page.goBack({ waitUntil: 'domcontentloaded' });
         await this.waitForTableData();
         return scanAndSelect();
       }
@@ -160,8 +158,15 @@ export class MyRequestsPage extends BasePage {
       let retries = 0;
       while (retries < 3 && !isVisible) {
         retries++;
-        console.log(`No active activity "Open" link found. Retrying in 10s... (Attempt ${retries}/3)`);
-        await this.page.waitForTimeout(1000);
+        console.log(`No active activity "Open" link found. Retrying... (Attempt ${retries}/3)`);
+        // FIX: this wasn't a "hope the UI updated" sleep — it's a deliberate backoff before a
+        // page reload, which is legitimate. But racing it against the link actually appearing
+        // means a fast recovery doesn't still pay the full fixed delay before we try again.
+        try {
+          await openLink.waitFor({ state: 'visible', timeout: 1000 });
+        } catch {
+          // ignore, we just wait up to 1000ms for it to appear
+        }
         await this.page.reload({ waitUntil: 'domcontentloaded' });
         await this.waitForLoaders();
 
@@ -179,7 +184,7 @@ export class MyRequestsPage extends BasePage {
       await openLink.click({ timeout: 60000 });
       await this.page.waitForURL(/ServiceRequests\/Activity/i, {
         timeout: 60000, waitUntil: 'domcontentloaded',
-      }).catch(() => {});
+      });
       await this.waitForLoaders();
       await this.page.locator('#ActivityVerdictButton')
         .waitFor({ state: 'visible', timeout: 30000 })
@@ -204,7 +209,7 @@ export class MyRequestsPage extends BasePage {
       ).first();
       if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
         await searchInput.fill(trackingNumber);
-        await this.page.waitForLoadState('networkidle').catch(() => {});
+        await this.waitForFilteredTableData();
       }
 
       const targetRow = this.page.locator('tbody tr').filter({ hasText: trackingNumber }).first();
@@ -241,7 +246,7 @@ export class MyRequestsPage extends BasePage {
       ).first();
       if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
         await searchInput.fill(trackingNumber);
-        await this.page.waitForLoadState('networkidle').catch(() => {});
+        await this.waitForFilteredTableData();
       }
 
       const targetRow = this.page.locator('tbody tr').filter({ hasText: trackingNumber }).first();
@@ -314,7 +319,7 @@ export class MyRequestsPage extends BasePage {
         }
 
         console.log(`⏭ SR is not actionable by Coordinator (${href}). Going back...`);
-        await this.page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        await this.page.goBack({ waitUntil: 'domcontentloaded' });
         await this.waitForTableData();
         return scanAndOpen();
       }

@@ -36,7 +36,7 @@ export class StorefrontHomePage extends BasePage {
   /** Navigates to About Us and scrolls through the full page. */
   async browseAboutPage(): Promise<void> {
     await this.clickAboutUs();
-    await this.page.waitForLoadState('networkidle').catch(() => {});
+    await this.page.waitForLoadState('domcontentloaded');
     await scrollFromTop(this.page);
   }
 
@@ -47,7 +47,7 @@ export class StorefrontHomePage extends BasePage {
     const reloadBtn = this.page.getByRole('button', { name: 'Reload table' });
     await reloadBtn.waitFor({ state: 'visible', timeout: 10000 });
     await reloadBtn.click();
-    await this.page.waitForLoadState('networkidle').catch(() => {});
+    await this.waitForLoaders();
     await scrollFromTop(this.page);
   }
 }

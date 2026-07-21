@@ -68,7 +68,7 @@ export class ServicesListingPage extends BasePage {
 
     if (totalServicesOnPage === 0 && totalPages > 1) {
       console.log('No visible service links found. Falling back to Page 1...');
-      await this.page.getByRole('button', { name: 'Page 1' }).click().catch(() => {});
+      await this.page.getByRole('button', { name: 'Page 1' }).click();
       await this.waitForServicesLoaded();
       totalServicesOnPage = await visibleServiceLinks.count();
     }
@@ -137,8 +137,7 @@ export class ServicesListingPage extends BasePage {
 
   async browseAllServices(): Promise<void> {
     await this.page.waitForURL(/\/services/i, { timeout: 15000 });
-    await this.page.waitForLoadState('networkidle').catch(() => {});
-
+    await this.waitForServicesLoaded();
     const carouselNext = this.page.locator('#fsp-svc-next').first();
     let pageNum = 1;
 
@@ -160,7 +159,7 @@ export class ServicesListingPage extends BasePage {
       const nextPageBtn = this.page.getByRole('button', { name: `Page ${pageNum}` });
       if (!await nextPageBtn.isVisible({ timeout: 2000 }).catch(() => false)) break;
       await nextPageBtn.click();
-      await this.page.waitForLoadState('networkidle').catch(() => {});
+      await this.waitForServicesLoaded();
     }
   }
 }

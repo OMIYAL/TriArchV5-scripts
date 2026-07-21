@@ -85,12 +85,12 @@ export class ActivityReviewPage extends BasePage {
           await this.completePackaging();
           await this.submitDecision();
           success = true;
-        } catch (e) {
+        } catch (e: any) {
           retries++;
           if (retries >= 2) throw e;
           console.log(`Activity failed: ${e.message}. Retrying...`);
           const closeBtn = this.page.locator('#activity-verdict-drawer .btn-close').first();
-          if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) await closeBtn.click().catch(() => { });
+          if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) await closeBtn.click();
           await this.page.goBack();
           await this.page.waitForLoadState('domcontentloaded');
           await myRequestsPage.openNextActiveActivity();
@@ -113,7 +113,7 @@ export class ActivityReviewPage extends BasePage {
           throw new Error(`Still on Activity page after step ${stepsProcessed}; decision may not have submitted.`);
         }
       }
-      await this.page.waitForLoadState('networkidle').catch(() => { });
+      await this.waitForLoaders();
     }
   }
 }

@@ -21,8 +21,17 @@ export class PackagingComponent extends BasePage {
     for (let i = 0; i < count; i++) {
       const cb = checkboxes.nth(i);
       if (!await cb.isChecked().catch(() => true)) {
-        await cb.check({ force: true }).catch(() => cb.locator('..').click({ force: true }).catch(() => { }));
+        // NOTE: force kept here — same custom-checkbox-styling reasoning as the checkbox
+        // cases in general-review.component.ts / citizen.steps.ts / offcanvas-decision.
+        await cb.check({ force: true }).catch(() => cb.locator('..').click({ force: true }));
         await this.waitForLoaders();
+        // FIX: previously, if BOTH the check() and the fallback click() failed, the loop moved
+        // on silently — the code would still proceed to click Merge with a source file left
+        // unchecked, which could either merge an incomplete package or fail merge for reasons
+        // that look unrelated to the actual root cause. Verify the real post-condition now.
+        if (!await cb.isChecked().catch(() => false)) {
+          throw new Error(`Packaging source-file checkbox at index ${i} failed to check and is still unchecked.`);
+        }
       }
     }
 
@@ -36,22 +45,48 @@ export class PackagingComponent extends BasePage {
       // Tab 2: Edit & Organize -> Save & Next
       console.log('Waiting for Edit & Organize tab (and document) to load...');
       const saveNextBtn = this.page.locator('#pkg-next-btn').first();
-      await saveNextBtn.waitFor({ state: 'visible', timeout: 45000 }).catch(() => { });
 
-      // FIX: Replaced the manual 2s-interval isDisabled() polling loop (up to 30s of dead
-      // time even after the button was ready) with expect().toBeEnabled(). Playwright's
-      // built-in assertion polling checks far more frequently (~every 100-500ms) and
-      // resolves the instant the button becomes enabled, instead of waiting for the next
-      // fixed 2-second tick. Timeout ceiling kept the same (30s) so real backend/merge
-      // latency is still tolerated — only the wasted polling granularity is removed.
-      const nextEnabled = await expect(saveNextBtn).toBeEnabled({ timeout: 30000 })
+      let t0 = Date.now();
+      await saveNextBtn.waitFor({ state: 'visible', timeout: 45000 });
+      console.log(`[timing] pkg-next-btn became VISIBLE after ${Date.now() - t0}ms`);
+
+      t0 = Date.now();
+      const nextEnabled = await expect(saveNextBtn).toBeEnabled({ timeout: 45000 })
         .then(() => true)
         .catch(() => false);
+      console.log(`[timing] pkg-next-btn became ENABLED after ${Date.now() - t0}ms (enabled=${nextEnabled})`);
 
       if (nextEnabled && await saveNextBtn.isVisible().catch(() => false)) {
+        // FIX: .click() has a built-in actionability wait (visible + stable + enabled +
+        // "not obscured by another element") that runs SILENTLY inside the call — this is
+        // very likely where the real 15-45s idle time is hiding, e.g. a "Loading document..."
+        // spinner still sitting on top of the button after it reports visible/enabled.
+        // Make that wait explicit and logged instead of opaque, and fail fast (5s) so a
+        // genuine block shows up clearly rather than being silently absorbed for 30-45s.
+        t0 = Date.now();
+        const stillBlocked = await this.page.evaluate((sel) => {
+          const btn = document.querySelector(sel) as HTMLElement | null;
+          if (!btn) return null;
+          const rect = btn.getBoundingClientRect();
+          const topEl = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          if (!topEl) return null;
+          if (topEl === btn || btn.contains(topEl)) return null;
+          return topEl.outerHTML.slice(0, 200);
+        }, '#pkg-next-btn').catch(() => null);
+        if (stillBlocked) {
+          console.log(`[blocker] Element covering #pkg-next-btn at click time: ${stillBlocked}`);
+        }
+
         console.log('Clicking Save & Next...');
-        await saveNextBtn.click();
+        await saveNextBtn.click({ timeout: 10000 }).catch(async (e) => {
+          console.log(`[timing] click() actionability wait took ${Date.now() - t0}ms before failing: ${e.message}`);
+          throw e;
+        });
+        console.log(`[timing] click() (including any internal actionability wait) took ${Date.now() - t0}ms`);
+
+        t0 = Date.now();
         await this.waitForLoaders();
+        console.log(`[timing] post-click loaders cleared after ${Date.now() - t0}ms`);
       } else {
         console.log('Save & Next button never became enabled within timeout.');
       }
@@ -59,17 +94,42 @@ export class PackagingComponent extends BasePage {
       // Tab 3: Finalize -> Next
       console.log('Waiting for Finalize tab (and document) to load...');
       const finalizeNextBtn = this.page.locator('#pkg-finalize-next').first();
-      await finalizeNextBtn.waitFor({ state: 'visible', timeout: 45000 }).catch(() => { });
 
-      // Same fix applied here — see comment above.
-      const finalizeEnabled = await expect(finalizeNextBtn).toBeEnabled({ timeout: 30000 })
+      t0 = Date.now();
+      await finalizeNextBtn.waitFor({ state: 'visible', timeout: 45000 });
+      console.log(`[timing] pkg-finalize-next became VISIBLE after ${Date.now() - t0}ms`);
+
+      t0 = Date.now();
+      const finalizeEnabled = await expect(finalizeNextBtn).toBeEnabled({ timeout: 45000 })
         .then(() => true)
         .catch(() => false);
+      console.log(`[timing] pkg-finalize-next became ENABLED after ${Date.now() - t0}ms (enabled=${finalizeEnabled})`);
 
       if (finalizeEnabled && await finalizeNextBtn.isVisible().catch(() => false)) {
+        t0 = Date.now();
+        const stillBlockedFinalize = await this.page.evaluate((sel) => {
+          const btn = document.querySelector(sel) as HTMLElement | null;
+          if (!btn) return null;
+          const rect = btn.getBoundingClientRect();
+          const topEl = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          if (!topEl) return null;
+          if (topEl === btn || btn.contains(topEl)) return null;
+          return topEl.outerHTML.slice(0, 200);
+        }, '#pkg-finalize-next').catch(() => null);
+        if (stillBlockedFinalize) {
+          console.log(`[blocker] Element covering #pkg-finalize-next at click time: ${stillBlockedFinalize}`);
+        }
+
         console.log('Clicking Finalize / Next...');
-        await finalizeNextBtn.click();
+        await finalizeNextBtn.click({ timeout: 10000 }).catch(async (e) => {
+          console.log(`[timing] click() actionability wait took ${Date.now() - t0}ms before failing: ${e.message}`);
+          throw e;
+        });
+        console.log(`[timing] click() (including any internal actionability wait) took ${Date.now() - t0}ms`);
+
+        t0 = Date.now();
         await this.waitForLoaders();
+        console.log(`[timing] post-finalize-click loaders cleared after ${Date.now() - t0}ms`);
         // Removed networkidle wait because it hangs the script for 30 seconds while the drawer is already open
       } else {
         console.log('Finalize/Next button never became enabled within timeout.');
