@@ -79,21 +79,34 @@ export const test = base.extend<object>({
     fs.mkdirSync(userDataDir, { recursive: true });
 
     const captureDelayMs = getMimikCaptureDelayMs();
+    const isCi = !!process.env.CI;
+    const viewport = isCi ? { width: 1920, height: 1080 } : null;
+    const filteredLaunchArgs = launchArgs.filter(
+      (arg) => !/--start-maximized/i.test(arg),
+    );
+    const ciWindowArgs = isCi
+      ? ['--window-size=1920,1080', '--disable-popup-blocking']
+      : [];
 
     const context = await chromium.launchPersistentContext(userDataDir, {
       channel: 'chromium',
       headless: false,
-      viewport: null,
+      viewport,
       acceptDownloads: true,
       slowMo: captureDelayMs,
       baseURL: projectUse.baseURL as string | undefined,
       ignoreHTTPSErrors: Boolean(projectUse.ignoreHTTPSErrors),
       args: [
-        ...launchArgs,
+        ...(isCi ? filteredLaunchArgs : launchArgs),
+        ...ciWindowArgs,
         `--disable-extensions-except=${extensionPath}`,
         `--load-extension=${extensionPath}`,
       ],
     });
+
+    console.log(
+      `\n>>> Mimik browser: CI=${isCi} viewport=${viewport ? `${viewport.width}x${viewport.height}` : 'null'}\n`,
+    );
 
     // Mimik opens an onboarding tab on first load; that can become Playwright's
     // default `page` and break storefront steps. Close extension pages first.

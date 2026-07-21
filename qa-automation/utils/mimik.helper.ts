@@ -28,12 +28,15 @@ export function getMimikExportFormat(): MimikExportFormat {
 
 /** Pause between Playwright ops in guide mode so Mimik can screenshot (see MIMIK_CAPTURE_DELAY_MS). */
 export function getMimikCaptureDelayMs(): number {
-  const raw = Number(process.env.MIMIK_CAPTURE_DELAY_MS ?? 1200);
+  // GitHub Actions sets missing secrets to "" — treat blank like unset.
+  const envRaw = process.env.MIMIK_CAPTURE_DELAY_MS?.trim();
+  const raw = Number(envRaw || 1200);
   return Number.isFinite(raw) && raw >= 0 ? raw : 1200;
 }
 
 export function getMimikExportSettleMs(): number {
-  const raw = Number(process.env.MIMIK_EXPORT_SETTLE_MS ?? 8000);
+  const envRaw = process.env.MIMIK_EXPORT_SETTLE_MS?.trim();
+  const raw = Number(envRaw || 8000);
   return Number.isFinite(raw) && raw >= 0 ? raw : 8000;
 }
 
