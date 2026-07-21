@@ -1,0 +1,93 @@
+name: Playwright Tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - feature/mimik
+    paths:
+      - 'qa-automation/**'
+      - '.github/workflows/playwright.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+      - feature/mimik
+    paths:
+      - 'qa-automation/**'
+      - '.github/workflows/playwright.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: qa-automation
+
+env:
+  CI: true
+
+jobs:
+  e2e-guide:
+    timeout-minutes: 90
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: qa-automation/package-lock.json
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Build patched Mimik extension
+        working-directory: ${{ github.workspace }}
+        run: |
+          git clone --depth 1 https://github.com/westpoint-io/mimik.git mimik
+          node qa-automation/scripts/mimik/apply-mimik-patch.mjs --mimik-dir mimik
+          cd mimik && pnpm install && pnpm build
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Generate BDD tests
+        run: npm run bdd:generate
+
+      - name: Run tests and export Mimik guide
+        run: xvfb-run npm run test:guide
+        env:
+          MIMIK_EXTENSION_PATH: ${{ github.workspace }}/mimik/.output/chrome-mv3
+          STOREFRONT_BASE_URL: ${{ secrets.STOREFRONT_BASE_URL }}
+          AUTH_BASE_URL: ${{ secrets.AUTH_BASE_URL }}
+          TENANT_NAME: ${{ secrets.TENANT_NAME }}
+          CITIZEN_USERNAME: ${{ secrets.CITIZEN_USERNAME }}
+          CITIZEN_PASSWORD: ${{ secrets.CITIZEN_PASSWORD }}
+          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
+          STRIPE_TEST_EMAIL: ${{ secrets.STRIPE_TEST_EMAIL }}
+          STRIPE_TEST_CARD_NUMBER: ${{ secrets.STRIPE_TEST_CARD_NUMBER }}
+          STRIPE_TEST_EXPIRATION: ${{ secrets.STRIPE_TEST_EXPIRATION }}
+          STRIPE_TEST_CVC: ${{ secrets.STRIPE_TEST_CVC }}
+          STRIPE_TEST_ZIP: ${{ secrets.STRIPE_TEST_ZIP }}
+          STRIPE_TEST_CARDHOLDER_NAME: ${{ secrets.STRIPE_TEST_CARDHOLDER_NAME }}
+          MIMIK_CAPTURE_DELAY_MS: ${{ secrets.MIMIK_CAPTURE_DELAY_MS }}
+          MIMIK_EXPORT_SETTLE_MS: ${{ secrets.MIMIK_EXPORT_SETTLE_MS }}
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: mimik-guide-pdf
+          path: qa-automation/mimik-exports/
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: qa-automation/playwright-report/
+          retention-days: 30
