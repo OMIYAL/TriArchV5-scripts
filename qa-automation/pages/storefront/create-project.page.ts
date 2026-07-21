@@ -133,18 +133,45 @@ export class CreateProjectPage {
     const selectedValue = await this.page.locator('#JurisdictionIdSelect').inputValue().catch(() => '');
     if (selectedValue) return;
 
+    // The faker-generated jurisdiction (US state names) does not necessarily match
+    // any jurisdiction actually configured for this tenant — searching for
+    // "California" etc. reliably returns zero results. Read the real option list
+    // straight off the underlying <select> instead of guessing a search term.
+    const nativeOptions = await this.page
+      .locator('#JurisdictionIdSelect option')
+      .evaluateAll((opts) =>
+        opts
+          .map((o) => ({ value: (o as HTMLOptionElement).value, text: (o.textContent ?? '').trim() }))
+          .filter((o) => o.value && !/select|choose/i.test(o.text)),
+      )
+      .catch(() => [] as Array<{ value: string; text: string }>);
+
+    if (nativeOptions.length > 0) {
+      const choice = nativeOptions[0];
+      await this.page.locator('#JurisdictionIdSelect').selectOption(choice.value);
+      await this.page.waitForFunction(() => {
+        const el = document.querySelector('#JurisdictionIdSelect') as HTMLSelectElement | null;
+        return !!el?.value;
+      }, { timeout: 10000 });
+      data.jurisdiction = choice.text || data.jurisdiction;
+      return;
+    }
+
+    // No pre-rendered <option>s (truly AJAX-backed) — fall back to the select2 UI.
     await closeSelect2Dropdown(this.page);
 
-    // Jurisdiction is an AJAX-searched select2 — a blank query can return zero
-    // results (especially on a fresh CI tenant), so type the jurisdiction name
-    // to trigger the server-side search instead of grabbing the first option.
     let selected = await selectFromSelect2Combobox(this.page, this.jurisdictionCombobox, {
       searchText: data.jurisdiction,
       preferredName: data.jurisdiction,
     });
 
     if (!selected) {
-      // Fall back to a blank-query open in case the search text itself matched nothing.
+      // The faked state name may not exist in this tenant — retry with a broad,
+      // single-character query likely to match any real jurisdiction name.
+      selected = await selectFromSelect2Combobox(this.page, this.jurisdictionCombobox, { searchText: 'a' });
+    }
+
+    if (!selected) {
       selected = await selectFromSelect2Combobox(this.page, this.jurisdictionCombobox, {});
     }
 
