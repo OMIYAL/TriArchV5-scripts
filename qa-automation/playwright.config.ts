@@ -7,7 +7,7 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const testDir = defineBddConfig({
   features: 'features/**/*.feature',
-  steps: 'steps/**/*.ts',
+  steps: ['steps/**/*.ts', 'fixtures/mimik.fixture.ts'],
 });
 
 // State file paths
@@ -26,8 +26,8 @@ export default defineConfig({
   timeout: 300000,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
-  workers: 1,
+  retries: 0,
+  workers: process.env.CI ? 1 : undefined,
 
   reporter: [
     ['html', { open: 'never' }],
@@ -36,19 +36,9 @@ export default defineConfig({
 
   use: {
     actionTimeout: 15000,
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
-
-    // ─── Viewport & Window Size ──────────────────────────────────
-    // viewport: null means Playwright will NOT impose a fixed virtual
-    // canvas — the viewport size matches the actual browser window.
-    // Combined with --start-maximized, the window fills your physical
-    // screen and the viewport matches it exactly (no stretching).
-    //
-    // DO NOT set a fixed pixel size here (e.g. 1920x1080) unless your
-    // screen is actually that resolution — it causes the page to render
-    // wider than the window and everything gets clipped on the right.
     viewport: null,
 
     launchOptions: {
@@ -80,6 +70,22 @@ export default defineConfig({
       },
     },
 
+    {
+      // Run only via: npm run test:guide  (or --project=guide-mimik)
+      // Excluded from default npm test / test:bdd / test:smoke scripts.
+      name: 'guide-mimik',
+      // Mimik capture adds per-click delay; allow longer waits than smoke.
+      timeout: 600000,
+      testMatch: ['**/features/storefront/**/*.feature.spec.js'],
+      use: {
+        headless: false,
+        viewport: null,
+        baseURL: process.env.STOREFRONT_BASE_URL,
+        actionTimeout: 45000,
+        navigationTimeout: 60000,
+      },
+    },
+
     // ═══════════════════════════════════════════════════════════════
     // PORTAL TESTS (Admin/Reviewer - Uses saved auth)
     // ═══════════════════════════════════════════════════════════════
@@ -103,6 +109,18 @@ export default defineConfig({
       use: {
         viewport: null,
         baseURL: process.env.STOREFRONT_BASE_URL,
+      },
+    },
+
+    // ═══════════════════════════════════════════════════════════════
+    // API CONTRACT (Spec → Gherkin → HTTP) — Control Room Contacts
+    // ═══════════════════════════════════════════════════════════════
+    {
+      name: 'api-control-room',
+      testMatch: ['**/features/api/**/*.feature.spec.js'],
+      use: {
+        baseURL: process.env.API_BASE_URL || 'https://localhost:44336',
+        ignoreHTTPSErrors: true,
       },
     },
   ],

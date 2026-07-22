@@ -1,5 +1,5 @@
-import { createBdd } from 'playwright-bdd';
 import { expect } from '@playwright/test';
+import { Given, When, Then } from '../fixtures/mimik.fixture';
 import { StorefrontHomePage } from '../pages/storefront/storefront-home.page';
 import { ServicesListingPage } from '../pages/storefront/services-listing.page';
 import { ServiceApplyPage } from '../pages/storefront/service-apply.page';
@@ -9,8 +9,8 @@ import { StripeCheckoutPage } from '../pages/stripe-checkout.page';
 import { generateDynamicProjectData, DynamicProjectData } from '../utils/data-generator.helper';
 import { fillApplicantFields } from '../utils/form-fill.helper';
 import { closeSelect2Dropdown } from '../utils/select2.helper';
-
-const { Given, When, Then } = createBdd();
+import { isMimikGuideMode } from '../utils/mimik.helper';
+import { guideClick } from '../utils/mimik-action.helper';
 
 let targetServiceUrl = '';
 let currentProjectData: DynamicProjectData | null = null;
@@ -41,39 +41,79 @@ Given('the citizen navigates to an available service', async ({ page }) => {
 // ─────────────────────────────────────────────
 
 When('the citizen logs in with valid credentials', async ({ page }) => {
-  const authLogin = new AuthLoginPage(page);
-  await authLogin.completeLoginFlow(
-    process.env.TENANT_NAME || '',
-    process.env.CITIZEN_USERNAME || '',
-    process.env.CITIZEN_PASSWORD || '',
-  );
+  const usernameVisible = await page
+    .getByRole('textbox', { name: 'Username', exact: true })
+    .isVisible()
+    .catch(() => false);
 
-  await page.waitForURL(/storefront/i, { timeout: 90000 });
+  // Already on storefront (e.g. session from a prior navigation) — skip the auth form.
+  if (!usernameVisible && /storefront/i.test(page.url())) {
+    console.log('Already on storefront without login form; skipping credential entry.');
+  } else {
+    const authLogin = new AuthLoginPage(page);
+    await authLogin.completeLoginFlow(
+      process.env.TENANT_NAME || '',
+      process.env.CITIZEN_USERNAME || '',
+      process.env.CITIZEN_PASSWORD || '',
+    );
+    const afterLoginWait = isMimikGuideMode()
+      ? { timeout: 90000, waitUntil: 'commit' as const }
+      : { timeout: 90000 };
+    await page.waitForURL(/storefront/i, afterLoginWait);
+  }
 
   if (!page.url().includes('/services/Apply') && targetServiceUrl) {
     let applyUrl = new URL(targetServiceUrl, process.env.STOREFRONT_BASE_URL || '');
     applyUrl.searchParams.set('__tenant', process.env.TENANT_NAME || '');
-    await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 60000 });
   }
 });
 
 When('creates a new project for the service application', async ({ page }) => {
   const serviceApply = new ServiceApplyPage(page);
   
-  await serviceApply.waitForProjectCombobox();
+  // Apply page may already have redirected to Create; combobox only exists on Apply.
+  if (!/PermitProjects\/Create/i.test(page.url())) {
+    await serviceApply.waitForProjectCombobox();
+  }
+
   const createProjectPage = await serviceApply.openCreateProjectPopup();
 
   currentProjectData = generateDynamicProjectData();
   await createProjectPage.completeFullFlow(currentProjectData);
 
-  const rawPopupPage = createProjectPage.getRawPage();
-  await rawPopupPage.waitForURL(/projectId=|services\/Apply/i, { timeout: 60000 }).catch(() => {});
-  
-  if (!rawPopupPage.isClosed()) {
-    await rawPopupPage.close();
+  const rawCreatePage = createProjectPage.getRawPage();
+  await rawCreatePage.waitForURL(/projectId=|services\/Apply/i, { timeout: 60000 }).catch(() => {});
+
+  const projectId =
+    createProjectPage.getCreatedProjectId() ||
+    new URL(rawCreatePage.isClosed() ? page.url() : rawCreatePage.url()).searchParams.get('projectId') ||
+    new URL(page.url()).searchParams.get('projectId') ||
+    '';
+
+  // Only close a real popup — never close the main apply tab.
+  if (!rawCreatePage.isClosed() && rawCreatePage !== page) {
+    await rawCreatePage.close();
   }
 
-  await page.reload({ waitUntil: 'domcontentloaded' });
+  // Always land on Apply with projectId so the combobox binds without waiting on lookup.
+  if (targetServiceUrl) {
+    const applyUrl = new URL(targetServiceUrl, process.env.STOREFRONT_BASE_URL || '');
+    applyUrl.searchParams.set('__tenant', process.env.TENANT_NAME || '');
+    if (projectId) {
+      applyUrl.searchParams.set('projectId', projectId);
+      console.log(`Returning to Apply with projectId=${projectId}`);
+    } else {
+      console.log('No projectId captured after create — Apply may need dropdown selection.');
+    }
+    await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  } else if (/services\/Apply/i.test(page.url()) && projectId && !/projectId=/i.test(page.url())) {
+    const applyUrl = new URL(page.url());
+    applyUrl.searchParams.set('projectId', projectId);
+    await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  } else {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+  }
   await page.waitForTimeout(1000);
 });
 
@@ -89,6 +129,7 @@ When('completes all required form steps and checklists', async ({ page }) => {
   const submitButton = page.getByRole('button', { name: /Submit application/i });
   const nextButton = page.getByRole('button', { name: 'Next', exact: true }).and(page.locator(':visible')).last();
   let serviceDocUploaded = false;
+  let uploadFailures = 0;
 
   for (let attempt = 0; attempt < 15; attempt++) {
     await page.waitForTimeout(1000);
@@ -112,13 +153,13 @@ When('completes all required form steps and checklists', async ({ page }) => {
       }
 
       if (await nextButton.isVisible().catch(() => false)) {
-        await nextButton.click({ force: true });
-        await page.waitForLoadState('networkidle');
+        await guideClick(page, nextButton);
+        await page.waitForLoadState('networkidle').catch(() => {});
         continue;
       }
 
       if (await submitButton.isVisible().catch(() => false)) {
-        await submitButton.click({ force: true });
+        await guideClick(page, submitButton);
         await payButton.waitFor({ state: 'visible', timeout: 30000 }).catch(() => {});
         return;
       }
@@ -141,16 +182,33 @@ When('completes all required form steps and checklists', async ({ page }) => {
 
     // Upload Documents
     if (!serviceDocUploaded) {
-      const uploaded = await new DocumentUploadComponent(page).uploadIfVisible(undefined, undefined, 'service');
-      if (uploaded) serviceDocUploaded = true;
+      const uploadTrigger = page
+        .locator('#OpenSupportingDocumentButton')
+        .or(page.getByRole('button', { name: /Supporting documents|Upload document/i }))
+        .first();
+      const uploadVisible = await uploadTrigger.isVisible({ timeout: 800 }).catch(() => false);
+
+      if (uploadVisible) {
+        const uploaded = await new DocumentUploadComponent(page).uploadIfVisible(undefined, undefined, 'service');
+        if (uploaded) {
+          serviceDocUploaded = true;
+          uploadFailures = 0;
+        } else {
+          uploadFailures += 1;
+          console.log(`Supporting document upload attempt ${uploadFailures}/3 failed.`);
+          if (uploadFailures >= 3) {
+            throw new Error('Supporting document upload panel failed to open after 3 attempts.');
+          }
+        }
+      }
     }
 
     // Click Next
     if (await nextButton.isVisible().catch(() => false)) {
-      await nextButton.click({ force: true });
+      await guideClick(page, nextButton);
       await page.waitForTimeout(2000);
     } else if (await submitButton.isVisible().catch(() => false)) {
-      await submitButton.click({ force: true });
+      await guideClick(page, submitButton);
       await payButton.waitFor({ state: 'visible', timeout: 30000 }).catch(() => {});
       return;
     }
@@ -171,7 +229,7 @@ When('completes the intake fee payment via Stripe if required', async ({ page })
   }
 
   const popupPromise = page.waitForEvent('popup', { timeout: 8000 }).catch(() => null);
-  await payButton.click({ force: true });
+  await guideClick(page, payButton, { force: true });
   const popup = await popupPromise;
 
   const stripePage = popup || page;

@@ -1,8 +1,8 @@
 Feature: Storefront Citizen Service Request Submission
-
   @citizen @storefront @smoke
   Scenario: Citizen selects a service, logs in, creates a project, and submits a service request
-    Given the citizen is on the Storefront home page
+    Given Mimik recording is started
+    And the citizen is on the Storefront home page
     And the citizen navigates to an available service
     When the citizen logs in with valid credentials
     And creates a new project for the service application
@@ -10,3 +10,4 @@ Feature: Storefront Citizen Service Request Submission
     And completes the intake fee payment via Stripe if required
     Then the service request should be submitted successfully
     And the tracking number and service request state should be saved
+    And Mimik recording is stopped and the guide is exported

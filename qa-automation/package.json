@@ -3,16 +3,21 @@
     "version": "1.0.0",
     "description": "QA Automation for TriArch V5",
     "scripts": {
-        "auth:setup": "playwright test --project=setup",
+        "auth:setup": "playwright test --project=portal-auth-setup",
         "bdd:generate": "bddgen",
-        "test": "playwright test",
-        "test:bdd": "bddgen && playwright test",
-        "test:headed": "playwright test --headed",
-        "test:dev": "playwright test --project=chromium --no-deps",
-        "test:dev:headed": "playwright test --project=chromium --no-deps --headed",
-        "test:smoke": "playwright test --grep @smoke",
+        "test": "playwright test --project=storefront-chromium --project=portal-chromium --project=e2e-full-flow --project=api-control-room",
+        "oas:gherkin": "node scripts/oas-to-gherkin.mjs",
+        "test:bdd": "bddgen && playwright test --project=storefront-chromium --project=portal-chromium --project=e2e-full-flow --project=api-control-room",
+        "test:api-contact": "npm run oas:gherkin && bddgen && playwright test --project=api-control-room",
+        "test:headed": "playwright test --headed --project=storefront-chromium --project=portal-chromium --project=e2e-full-flow --project=api-control-room",
+        "test:guide": "bddgen && playwright test --project=guide-mimik --headed",
+        "test:ci": "npm run bdd:generate && playwright test --project=guide-mimik --headed",
+        "mimik:patch": "node scripts/mimik/apply-mimik-patch.mjs",
+        "test:dev": "playwright test --project=storefront-chromium --no-deps",
+        "test:dev:headed": "playwright test --project=storefront-chromium --no-deps --headed",
+        "test:smoke": "playwright test --grep @smoke --project=storefront-chromium",
         "show-report": "playwright show-report",
-        "test:debug": "playwright test --debug --project=chromium --no-deps"
+        "test:debug": "playwright test --debug --project=storefront-chromium --no-deps"
     },
     "keywords": [
         "playwright",
@@ -29,7 +34,8 @@
         "@faker-js/faker": "^10.5.0",
         "@playwright/test": "^1.40.0",
         "@types/node": "^20.0.0",
-        "playwright-bdd": "^7.0.0"
+        "playwright-bdd": "^7.0.0",
+        "typescript": "^5.0.0"
     },
     "dependencies": {
         "dotenv": "^16.6.1"

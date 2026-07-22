@@ -41,6 +41,12 @@ test-results/state/
 # ─── Playwright: Cache ───────────────────────────────────────
 playwright/.cache/
 
+# ─── Mimik guide recording profile (local Chromium user-data) ─
+qa-automation/.mimik-profile/
+
+# ─── Mimik guide exports (PDF/HTML/Markdown from npm run test:guide) ─
+qa-automation/mimik-exports/
+
 # ─── TypeScript Build Output ─────────────────────────────────
 dist/
 build/

@@ -21,12 +21,16 @@ export interface DynamicProjectData {
  * test collisions and remove reliance on hardcoded .env values.
  */
 export function generateDynamicProjectData(): DynamicProjectData {
+  // Wizard step-1 gate only allows letters/spaces/-/'/. in city & state.
+  const lettersOnly = (value: string) =>
+    value.replace(/[^A-Za-z\s\-'.]/g, '').replace(/\s+/g, ' ').trim() || 'Austin';
+
   return {
     // Generate a unique project name (e.g. "Test Project Acme Steel 1234")
     name: `Test Project ${faker.commerce.productName()} ${faker.string.numeric(4)}`,
     jurisdiction: faker.helpers.arrayElement(['Colorado', 'California', 'Texas', 'Florida', 'New York', 'Georgia']),
     streetAddress: faker.location.streetAddress(),
-    city: faker.location.city(),
+    city: lettersOnly(faker.location.city()),
     state: faker.location.state({ abbreviated: true }),
     postalCode: faker.location.zipCode('#####'),
     

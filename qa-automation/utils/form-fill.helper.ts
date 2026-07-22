@@ -2,6 +2,8 @@ import { Page } from '@playwright/test';
 import { faker } from '@faker-js/faker';
 import { DynamicProjectData } from './data-generator.helper';
 import { selectFromSelect2Combobox, closeSelect2Dropdown } from './select2.helper';
+import { isMimikGuideMode } from './mimik.helper';
+import { guideType } from './mimik-action.helper';
 
 const EMPTY_COMBOBOX_PATTERN = /select|choose|no project|enter jurisdiction|search jurisdiction/i;
 
@@ -104,10 +106,18 @@ async function fillEmptyInputs(page: Page, projectData?: DynamicProjectData | nu
     }
     if (/jurisdiction/i.test(hint) && projectData?.jurisdiction) value = projectData.jurisdiction;
 
-    await field.fill(value).catch(async () => {
-      await field.click({ force: true }).catch(() => {});
-      await field.pressSequentially(value, { delay: 15 }).catch(() => {});
-    });
+    if (isMimikGuideMode()) {
+      await guideType(page, field, value).catch(async () => {
+        await field.click({ force: true }).catch(() => {});
+        await field.fill(value).catch(() => {});
+        await page.waitForTimeout(200).catch(() => {});
+      });
+    } else {
+      await field.fill(value).catch(async () => {
+        await field.click({ force: true }).catch(() => {});
+        await field.pressSequentially(value, { delay: 15 }).catch(() => {});
+      });
+    }
   }
 }
 

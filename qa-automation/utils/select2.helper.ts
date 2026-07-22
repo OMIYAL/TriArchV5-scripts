@@ -1,4 +1,6 @@
 import { Locator, Page } from '@playwright/test';
+import { guideClick } from './mimik-action.helper';
+import { isMimikGuideMode } from './mimik.helper';
 
 const ENABLED_OPTION_SELECTOR =
   '.select2-container--open [role="option"]:not([aria-disabled="true"]):not(.loading-results)';
@@ -74,13 +76,21 @@ export async function selectFromSelect2Combobox(
 
   await closeSelect2Dropdown(page);
   await combobox.scrollIntoViewIfNeeded();
-  await combobox.click({ force: true });
+  if (isMimikGuideMode()) {
+    await guideClick(page, combobox);
+  } else {
+    await combobox.click({ force: true });
+  }
 
   const searchInput = page.locator('input.select2-search__field:visible');
   const hasSearch = await searchInput.waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false);
 
   if (hasSearch && options?.searchText) {
-    await searchInput.click({ force: true });
+    if (isMimikGuideMode()) {
+      await guideClick(page, searchInput);
+    } else {
+      await searchInput.click({ force: true });
+    }
     await searchInput.fill('');
     await searchInput.pressSequentially(options.searchText, { delay: 40 });
     await waitForSelect2Results(page, 12000);

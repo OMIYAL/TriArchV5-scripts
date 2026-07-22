@@ -2,10 +2,11 @@ import { Page, Locator } from '@playwright/test';
 import { BasePage } from '../base.page';
 import { CreateProjectPage } from './create-project.page';
 import { DocumentUploadComponent } from './document-upload.component';
+import { guideClick } from '../../utils/mimik-action.helper';
+const CREATE_PROJECT_URL = /PermitProjects\/Create/i;
 
 export class ServiceApplyPage extends BasePage {
   private readonly projectCombobox: Locator;
-  private readonly createNewProjectLink: Locator;
   private readonly payIntakeFeeButton: Locator;
 
   constructor(page: Page) {
@@ -15,26 +16,157 @@ export class ServiceApplyPage extends BasePage {
       .getByRole('combobox', { name: /No project|project/i })
       .or(page.locator('#ProjectId'))
       .first();
-    this.createNewProjectLink = page.getByRole('link', { name: /Create a new project/i });
     this.payIntakeFeeButton = page.locator('#PayIntakeFeeButton');
   }
 
+  /** "+ New project" link/button — label varies by service skin. */
+  private createProjectControl(): Locator {
+    return this.page
+      .locator('a[href*="PermitProjects/Create"], a[href*="PermitProjects%2FCreate"]')
+      .or(this.page.getByRole('link', { name: /Create a new project|New project/i }))
+      .or(this.page.getByRole('button', { name: /New project/i }))
+      .first();
+  }
+
+  private findCreateProjectPage(): Page | null {
+    if (CREATE_PROJECT_URL.test(this.page.url())) {
+      return this.page;
+    }
+    for (const p of this.page.context().pages()) {
+      if (!p.isClosed() && CREATE_PROJECT_URL.test(p.url())) {
+        return p;
+      }
+    }
+    return null;
+  }
+
+  /** Poll all tabs — avoids Promise.race rejecting when popup never fires under Mimik. */
+  private async waitForCreateProjectPage(timeout = 90000): Promise<{ kind: 'popup' | 'sameTab'; page: Page }> {
+    const deadline = Date.now() + timeout;
+    const applyPage = this.page;
+
+    while (Date.now() < deadline) {
+      const found = this.findCreateProjectPage();
+      if (found) {
+        if (found === applyPage) {
+          return { kind: 'sameTab', page: found };
+        }
+        return { kind: 'popup', page: found };
+      }
+
+      // Apply tab may close when Create opens in a popup — do not call waitForTimeout on a closed page.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+
+    const openUrls = this.page
+      .context()
+      .pages()
+      .filter((p) => !p.isClosed())
+      .map((p) => p.url())
+      .join(' | ');
+
+    throw new Error(
+      `Create project page did not open within ${timeout}ms. ` +
+        `Apply tab: ${this.page.url()}. Open tabs: ${openUrls || '(none)'}`,
+    );
+  }
+
   async waitForProjectCombobox(): Promise<void> {
-    await this.projectCombobox.waitFor({ state: 'visible', timeout: 25000 });
+    await this.page
+      .waitForURL(/services\/Apply/i, this.urlWait(45000))
+      .catch(() => {});
+    await this.projectCombobox.waitFor({ state: 'visible', timeout: 45000 });
+  }
+
+  /** Build the absolute Create URL from the control's href, preserving __tenant. */
+  private resolveCreateUrlFromHref(href: string): string {
+    const createUrl = new URL(href, this.page.url());
+    const currentTenant = new URL(this.page.url()).searchParams.get('__tenant');
+    if (currentTenant && !createUrl.searchParams.has('__tenant')) {
+      createUrl.searchParams.set('__tenant', currentTenant);
+    }
+    return createUrl.href;
   }
 
   async openCreateProjectPopup(): Promise<CreateProjectPage> {
-    await this.projectCombobox.waitFor({ state: 'visible', timeout: 15000 });
-    await this.createNewProjectLink.waitFor({ state: 'visible', timeout: 15000 });
+    // Service click / prior step sometimes already lands on Create (same tab).
+    const existing = this.findCreateProjectPage();
+    if (existing) {
+      console.log('Already on PermitProjects/Create — filling on current page (no popup).');
+      await existing.waitForLoadState('domcontentloaded').catch(() => {});
+      return new CreateProjectPage(existing);
+    }
 
-    const [popupPage] = await Promise.all([
-      this.page.waitForEvent('popup'),
-      this.createNewProjectLink.click(),
-    ]);
+    await this.projectCombobox.waitFor({ state: 'visible', timeout: 45000 });
 
-    await popupPage.waitForLoadState('domcontentloaded');
-    await popupPage.bringToFront();
-    return new CreateProjectPage(popupPage);
+    const createControl = this.createProjectControl();
+    await createControl.waitFor({ state: 'visible', timeout: 45000 });
+    await createControl.scrollIntoViewIfNeeded();
+
+    // Preferred path: the "+ New project" control is an anchor pointing at
+    // PermitProjects/Create. Popups are unreliable under the Mimik extension +
+    // xvfb (CI leaves an orphan about:blank tab), so navigate the apply tab
+    // directly whenever an href is available.
+    const href = await createControl.getAttribute('href').catch(() => null);
+    if (href && /PermitProjects(\/|%2F)Create/i.test(href)) {
+      const createUrl = this.resolveCreateUrlFromHref(href);
+      console.log(`Navigating directly to Create project page: ${createUrl}`);
+      await this.page.goto(createUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await this.page
+        .waitForURL(CREATE_PROJECT_URL, { timeout: 30000 })
+        .catch(() => {});
+
+      if (CREATE_PROJECT_URL.test(this.page.url())) {
+        await this.page.bringToFront();
+        return new CreateProjectPage(this.page);
+      }
+      console.log('Direct navigation did not land on Create — falling back to click.');
+    }
+
+    // Fallback: click the control and watch for either a popup or a same-tab nav.
+    const popupPromise = this.page
+      .waitForEvent('popup', { timeout: 15000 })
+      .catch(() => null);
+
+    await guideClick(this.page, createControl);
+
+    const popup = await popupPromise;
+    if (popup) {
+      await popup.waitForLoadState('domcontentloaded').catch(() => {});
+      const reached = await popup
+        .waitForURL(CREATE_PROJECT_URL, { timeout: 30000 })
+        .then(() => true)
+        .catch(() => false);
+
+      // A blank/blocked popup is useless — recover by navigating it (or the
+      // apply tab) to the resolved Create URL instead of timing out.
+      if (!reached && href && /PermitProjects(\/|%2F)Create/i.test(href)) {
+        const createUrl = this.resolveCreateUrlFromHref(href);
+        const navPage = popup.isClosed() ? this.page : popup;
+        await navPage
+          .goto(createUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+          .catch(() => {});
+      }
+
+      if (!popup.isClosed() && CREATE_PROJECT_URL.test(popup.url())) {
+        await popup.bringToFront();
+        console.log('Create project opened in a popup/new tab.');
+        return new CreateProjectPage(popup);
+      }
+    }
+
+    const target = await this.waitForCreateProjectPage(90000);
+
+    await target.page.bringToFront();
+    await target.page.waitForLoadState('domcontentloaded').catch(() => {});
+
+    if (target.kind === 'popup') {
+      console.log('Create project opened in a popup/new tab.');
+    } else {
+      console.log('Create project opened in the same tab (no popup).');
+    }
+
+    return new CreateProjectPage(target.page);
   }
 
   async selectCreatedProject(projectName: string): Promise<void> {
@@ -79,7 +211,7 @@ export class ServiceApplyPage extends BasePage {
       }
 
       await combobox.scrollIntoViewIfNeeded();
-      await combobox.click({ force: true });
+      await guideClick(this.page, combobox);
 
       const projectOption = this.page.getByRole('option', { name: new RegExp(projectName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first();
       const found = await projectOption.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false);
@@ -103,6 +235,6 @@ export class ServiceApplyPage extends BasePage {
   }
 
   async clickPayIntakeFee(): Promise<void> {
-    await this.payIntakeFeeButton.click({ force: true });
+    await guideClick(this.page, this.payIntakeFeeButton, { force: true });
   }
 }
