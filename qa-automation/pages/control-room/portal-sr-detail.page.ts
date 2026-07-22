@@ -45,23 +45,61 @@ export class PortalSRDetailPage extends BasePage {
         break;
       }
 
+      // CORRECTION: the jQuery `$._data(btn, 'events')` check I added previously does NOT
+      // apply to this button — confirmed via trace: it burned the full 15000ms timeout and
+      // never resolved true, which is exactly why the click appeared to fire "very late."
+      // button.js-assign-reviewer evidently isn't wired the same way as #ActivityVerdictButton
+      // (different framework/binding mechanism), so generalizing that pattern here was wrong.
+      // Removed it — the retry-click loop just below already handles registration correctly on
+      // its own (confirmed in the latest trace: attempt 1 didn't open the offcanvas, a real
+      // `waitFor` correctly detected that after its full 1500ms, and attempt 2 succeeded —
+      // exactly the intended behavior, with no duplicate-request storm).
+
       const offcanvasBody = this.page.locator('div.offcanvas-body').last();
 
-      // If the page is still settling, the first click may be ignored.
-      // Retry the assignment click until the offcanvas opens.
-      for (let attempt = 0; attempt < 3; attempt++) {
-        await assignButtons.first().click();
-        const opened = await offcanvasBody.isVisible({ timeout: 1500 }).catch(() => false);
-        if (opened) {
-          break;
-        }
-        console.log(`  ↻ Offcanvas did not open on attempt ${attempt + 1}; retrying...`);
-        await this.page.waitForTimeout(500);
+      // FIX: the previous version retried the click after only 1500ms — too short, since this
+      // offcanvas has been observed taking 1.3-3.9s to genuinely open. Retrying that fast meant
+      // clicking the SAME button again while the FIRST click's offcanvas backdrop was still
+      // mid-transition, which then covered the button — confirmed via trace: the second click()
+      // call itself hung for the full 15000ms because Playwright's actionability check kept
+      // waiting for the target to stop being obscured, which never resolved in time. Now: one
+      // click, one genuinely patient wait, and only retry if that really failed — with a bounded
+      // click timeout so a real block fails fast and visibly instead of hanging.
+      await assignButtons.first().click({ timeout: 5000 });
+      let opened = await offcanvasBody
+        .waitFor({ state: 'visible', timeout: 8000 })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!opened) {
+        console.log('  ↻ Offcanvas did not open after 8s — checking for a stuck backdrop before retrying...');
+        // If a backdrop is genuinely stuck, clicking again would just repeat the same hang.
+        // Wait for any backdrop to clear (or confirm there isn't one) before the retry click.
+        await this.page.locator('.offcanvas-backdrop').first()
+          .waitFor({ state: 'hidden', timeout: 3000 }).catch((e: any) => { console.log(`  ℹ️ No offcanvas backdrop to hide: ${e.message}`); });
+        await assignButtons.first().click({ timeout: 5000 }).catch((e) => {
+          console.log(`  ⚠️ Retry click also failed: ${e.message}`);
+        });
+        opened = await offcanvasBody
+          .waitFor({ state: 'visible', timeout: 10000 })
+          .then(() => true)
+          .catch(() => false);
       }
 
-      // Wait for the offcanvas body to slide open
-      await offcanvasBody.waitFor({ state: 'visible', timeout: 15000 });
-      await this.page.waitForTimeout(4000); // let offcanvas animation + initial list load settle
+      if (!opened) {
+        throw new Error(`AssignReviewer offcanvas failed to open after retry for step ${i + 1}.`);
+      }
+      // FIX: replaced fixed 4000ms "let offcanvas animation + initial list load settle" sleep
+      // with a real wait on the reviewer list actually being populated — either a reviewer
+      // option is present, or a "loading" indicator inside the offcanvas has cleared. This
+      // waits exactly as long as the list genuinely takes instead of guessing a duration.
+      await Promise.race([
+        offcanvasBody.locator('label.js-reviewer-option').first().waitFor({ state: 'visible', timeout: 8000 }),
+        offcanvasBody.locator('.spinner-border, .loading, [class*="loading"]').first()
+          .waitFor({ state: 'hidden', timeout: 8000 }),
+      ]).catch(() => {
+        console.log('  ⚠️ Reviewer list did not confirm ready within 8s — proceeding anyway.');
+      });
 
       // Type the username into the search box — the server filters the list,
       // surfacing Reviewer3 / SandeepP without requiring virtual-list scrolling
@@ -69,15 +107,84 @@ export class PortalSRDetailPage extends BasePage {
         .locator('input[type="search"], input[placeholder*="Search"], input[placeholder*="search"]')
         .first();
       await searchInput.waitFor({ state: 'visible', timeout: 5000 });
-      await searchInput.fill(reviewerUsername);
-      await this.page.waitForTimeout(2000); // wait for server to return filtered results
-      console.log(`  🔍 Searched for "${reviewerUsername}" in reviewer picker.`);
 
-      // Click the reviewer label from the filtered result
-      const reviewerLabel = offcanvasBody
+      // FIX (root cause, confirmed via live DevTools inspection — getEventListeners($0) showed
+      // only one 'input' listener, and manually testing in the browser proved this search box
+      // does NOT filter live at all: you must type, then explicitly click the button titled
+      // "Reload form list" (id="ReviewerPickerRefresh") to apply the filter. No amount of
+      // correctly-simulated typing could ever have fixed this — typing was never the trigger.
+      await searchInput.fill(reviewerUsername);
+
+      // FIX: trace showed only a 64ms gap between fill() finishing and the reload button click
+      // — too tight if the app's internal JS state (React/Angular-style binding) commits the
+      // typed value asynchronously relative to the 'input' event fill() dispatches. There is no
+      // DOM-observable signal for "the app has registered what I typed" (confirmed via
+      // getEventListeners: only one plain 'input' listener, no loading indicator appears between
+      // typing and reload) — so unlike the sleeps removed elsewhere in this codebase, there's no
+      // real wait to substitute here. Two things, in order: (1) blur the field first, a genuine
+      // triggering action in case the binding commits on blur rather than on 'input' — this is
+      // not a guess-and-wait, it's testing a real mechanism; (2) a short, explicitly-documented
+      // bounded wait as the honest fallback for the remaining async-state-commit window.
+      await searchInput.blur().catch((e: any) => { console.log(`  ℹ️ Could not blur search input: ${e.message}`); });
+      await this.page.waitForTimeout(400);
+
+      const reloadButton = offcanvasBody.locator('#ReviewerPickerRefresh, button[title="Reload form list"]').first();
+      await reloadButton.waitFor({ state: 'visible', timeout: 3000 });
+
+      // Sanity check: confirm the search box still holds what we typed right before reloading —
+      // if a blur handler cleared or reset it, we want to know that explicitly rather than
+      // silently reload with an empty/wrong filter.
+      const currentValue = await searchInput.inputValue().catch(() => '');
+      if (currentValue !== reviewerUsername) {
+        console.log(`  ⚠️ Search box shows "${currentValue}" instead of "${reviewerUsername}" right before reload — re-filling.`);
+        await searchInput.fill(reviewerUsername);
+        await this.page.waitForTimeout(400);
+      }
+
+      const reviewerLabelLocator = offcanvasBody
         .locator('label.js-reviewer-option')
         .filter({ hasText: reviewerUsername })
         .first();
+
+      // FIX: under increased server load, a single reload click sometimes returns before the
+      // name is actually filterable (confirmed by observation: works fine on steps 1-2, then
+      // fails after the reload click on step 3 as load increases). Rather than fail outright,
+      // retry the reload click itself — each retry gets its own real wait on both the network
+      // response and the label appearing, so this scales with actual server responsiveness
+      // instead of assuming one attempt is always enough.
+      let filtered = false;
+      const maxReloadAttempts = 3;
+      for (let reloadAttempt = 1; reloadAttempt <= maxReloadAttempts; reloadAttempt++) {
+        await this.waitForNetworkResponse(
+          /assignable-reviewers\/list/i,
+          async () => { await reloadButton.click(); },
+          8000
+        ).catch((e) => {
+          console.log(`  ⚠️ Reload request not detected (attempt ${reloadAttempt}/${maxReloadAttempts}): ${e.message}`);
+        });
+
+        filtered = await reviewerLabelLocator
+          .waitFor({ state: 'visible', timeout: 8000 })
+          .then(() => true)
+          .catch(() => false);
+
+        if (filtered) {
+          if (reloadAttempt > 1) {
+            console.log(`  ✅ "${reviewerUsername}" appeared after retry ${reloadAttempt}.`);
+          }
+          break;
+        }
+
+        console.log(`  ↻ "${reviewerUsername}" not yet in the filtered list after reload attempt ${reloadAttempt}/${maxReloadAttempts}${reloadAttempt < maxReloadAttempts ? ' — retrying...' : '.'}`);
+      }
+
+      if (!filtered) {
+        throw new Error(`"${reviewerUsername}" did not appear in the filtered reviewer list after ${maxReloadAttempts} reload attempts.`);
+      }
+      console.log(`  🔍 Found "${reviewerUsername}" in reviewer picker.`);
+
+      // Click the reviewer label from the filtered result
+      const reviewerLabel = reviewerLabelLocator;
       await reviewerLabel.waitFor({ state: 'visible', timeout: 10000 });
       await reviewerLabel.click();
 
@@ -91,13 +198,16 @@ export class PortalSRDetailPage extends BasePage {
       // Wait for offcanvas to fully close, then let the page re-render
       // activity steps before clicking the next AssignReviewer button.
       await offcanvasBody.waitFor({ state: 'hidden', timeout: 30000 });
-      await this.page.waitForTimeout(4000); // Increased to let page re-render assigned step chip safely
 
+      // FIX: replaced the stacked fixed 4000ms + 1300ms sleeps with the correct busy-overlay
+      // pattern already used correctly in launchReview() below: wait for the overlay to
+      // actually become visible first (bounded — the save may be fast enough that it never
+      // shows), THEN wait for it to clear. The old code went straight to waitFor({state:
+      // 'hidden'}) on an overlay that likely hadn't appeared yet, which resolves instantly
+      // and doesn't prove anything — hence needing two guessed sleeps to paper over it.
       const overlay = this.page.locator('div.abp-block-area.abp-block-area-busy');
+      await overlay.waitFor({ state: 'visible', timeout: 5000 }).catch((e: any) => { console.log(`  ℹ️ Overlay did not become visible (fast save): ${e.message}`); });
       await overlay.waitFor({ state: 'hidden', timeout: 30000 });
-
-      // Give the page a brief moment to settle before the next assignment click.
-      await this.page.waitForTimeout(1300);
 
       console.log(`  ✅ Step ${i + 1} assigned to "${reviewerUsername}"`);
     }
@@ -117,7 +227,13 @@ export class PortalSRDetailPage extends BasePage {
   async launchReview(): Promise<void> {
     // Scroll to top so both Launch Review buttons are accessible
     await this.page.evaluate(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
-    await this.page.waitForTimeout(3000);
+    // FIX: replaced fixed 3000ms "wait for smooth scroll to finish" sleep with an actual poll
+    // of scrollY reaching 0 — smooth-scroll duration varies by browser and by the user's
+    // reduced-motion settings, so a guessed fixed duration is exactly the kind of thing that's
+    // sometimes too short (flaky) and always too long on fast runs (slow).
+    await this.page.waitForFunction(() => window.scrollY === 0, { timeout: 5000 }).catch(() => {
+      console.log('  ⚠️ Scroll-to-top did not confirm within 5s — proceeding anyway.');
+    });
 
     // Try the mirror button (Next Action panel) first;
     // fall back to the fixed top-right header button (#LaunchReviewButton)

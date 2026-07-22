@@ -59,7 +59,7 @@ export class MyRequestsPage extends BasePage {
   /** Returns the number of `.ta-reviewer-chip` elements on the current SR detail page. */
   private async getReviewerCount(): Promise<number> {
     const chips = this.page.locator('.ta-reviewer-chip');
-    await chips.first().waitFor({ state: 'attached', timeout: 5000 }).catch(() => {});
+    await chips.first().waitFor({ state: 'attached', timeout: 5000 }).catch((e: any) => { console.log(`  ℹ️ No reviewer chips attached: ${e.message}`); });
     const count = await chips.count().catch(() => 0);
     console.log(`  Reviewer chip count: ${count}`);
     return count;
