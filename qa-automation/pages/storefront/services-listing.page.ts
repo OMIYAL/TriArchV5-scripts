@@ -1,6 +1,7 @@
 import { Page, Locator } from '@playwright/test';
 import { faker } from '@faker-js/faker';
 import { BasePage } from '../base.page';
+import { scrollFromTop } from '../../utils/scroll.helper';
 
 export class ServicesListingPage extends BasePage {
   private readonly moreServicesRegion: Locator;
@@ -67,7 +68,7 @@ export class ServicesListingPage extends BasePage {
 
     if (totalServicesOnPage === 0 && totalPages > 1) {
       console.log('No visible service links found. Falling back to Page 1...');
-      await this.page.getByRole('button', { name: 'Page 1' }).click().catch(() => {});
+      await this.page.getByRole('button', { name: 'Page 1' }).click();
       await this.waitForServicesLoaded();
       totalServicesOnPage = await visibleServiceLinks.count();
     }
@@ -132,5 +133,33 @@ export class ServicesListingPage extends BasePage {
     }
 
     throw new Error(`Service "${serviceName}" not found on any page`);
+  }
+
+  async browseAllServices(): Promise<void> {
+    await this.page.waitForURL(/\/services/i, { timeout: 15000 });
+    await this.waitForServicesLoaded();
+    const carouselNext = this.page.locator('#fsp-svc-next').first();
+    let pageNum = 1;
+
+    while (true) {
+      await scrollFromTop(this.page);
+
+      // Advance carousel until Next is disabled (all services on this page seen)
+      while (
+        await carouselNext.isVisible().catch(() => false) &&
+        !await carouselNext.isDisabled().catch(() => true)
+      ) {
+        await carouselNext.click();
+        await this.page.waitForTimeout(700);
+        await scrollFromTop(this.page);
+      }
+
+      // Move to next pagination page if available
+      pageNum++;
+      const nextPageBtn = this.page.getByRole('button', { name: `Page ${pageNum}` });
+      if (!await nextPageBtn.isVisible({ timeout: 2000 }).catch(() => false)) break;
+      await nextPageBtn.click();
+      await this.waitForServicesLoaded();
+    }
   }
 }

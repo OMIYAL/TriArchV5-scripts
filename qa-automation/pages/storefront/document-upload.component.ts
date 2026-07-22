@@ -39,7 +39,7 @@ export class DocumentUploadComponent {
     const titleChip = panel.getByRole('button', { name: chosenTitle, exact: true });
 
     if (await titleChip.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await titleChip.click({ force: true });
+      await titleChip.click();
       return chosenTitle;
     }
 
@@ -47,7 +47,7 @@ export class DocumentUploadComponent {
     for (const fallbackTitle of fallbacks) {
       const chip = panel.getByRole('button', { name: fallbackTitle, exact: true });
       if (await chip.isVisible({ timeout: 500 }).catch(() => false)) {
-        await chip.click({ force: true });
+        await chip.click();
         return fallbackTitle;
       }
     }
@@ -70,10 +70,8 @@ export class DocumentUploadComponent {
       .catch(() => null);
 
     console.log('Clicking Add document (save) button in upload offcanvas.');
-    await submitBtn.click({ force: true });
+    await submitBtn.click();
     await uploadResponse;
-
-    await this.page.waitForTimeout(1500);
 
     if (mode === 'project') {
       const attached = await this.page.getByText(/[1-9]\d* attached/i).waitFor({ state: 'visible', timeout: 15000 }).then(() => true).catch(() => false);
@@ -92,10 +90,10 @@ export class DocumentUploadComponent {
 
     const cancelButton = panel.getByRole('button', { name: 'Cancel' });
     if (await cancelButton.isVisible({ timeout: 500 }).catch(() => false)) {
-      await cancelButton.click({ force: true }).catch(() => {});
+      await cancelButton.click();
     }
-    await this.page.keyboard.press('Escape').catch(() => {});
-    await panel.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+    await this.page.keyboard.press('Escape');
+    await panel.waitFor({ state: 'hidden', timeout: 15000 });
   }
 
   async uploadIfVisible(
@@ -119,7 +117,7 @@ export class DocumentUploadComponent {
 
     try {
       await uploadTrigger.scrollIntoViewIfNeeded();
-      await uploadTrigger.click({ force: true });
+      await uploadTrigger.click();
 
       panel = this.resolveUploadPanel(mode);
       await panel.waitFor({ state: 'visible', timeout: 10000 });
@@ -129,7 +127,6 @@ export class DocumentUploadComponent {
       console.log(`Uploading "${pdfName}" with title "${selectedTitle}" (${mode} mode).`);
 
       await panel.locator('#UploadDoc_FileInput').setInputFiles(pdfPath);
-      await this.page.waitForTimeout(1000);
 
       const saved = await this.clickSubmitAndWait(panel, pdfName, mode);
       await this.dismissUploadPanel(panel);
@@ -141,7 +138,9 @@ export class DocumentUploadComponent {
             return !href.includes('handler=SaveDraft') || (href.includes('serviceDefinitionId') && href.includes('projectId'));
           },
           { timeout: 12000 },
-        ).catch(() => {});
+        ).catch(() => {
+          // It's okay if the URL doesn't change exactly to this pattern, we just wait.
+        });
       }
 
       if (saved) {

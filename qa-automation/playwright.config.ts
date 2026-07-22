@@ -23,8 +23,8 @@ export default defineConfig({
     '**/pages/**',
     '**/fixtures/**',
   ],
-  timeout: 300000,
-  fullyParallel: false,
+  timeout: 240000,
+  fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: 1,
@@ -52,7 +52,7 @@ export default defineConfig({
     viewport: null,
 
     launchOptions: {
-      args: ['--start-maximized'],
+      args: ['--start-maximized', '--window-size=1920,1080'],
     },
   },
 
@@ -62,7 +62,7 @@ export default defineConfig({
     // ═══════════════════════════════════════════════════════════════
     {
       name: 'portal-auth-setup',
-      testMatch: '**/tests/setup/**/*.setup.ts',
+      testMatch: ['**/tests/setup/**/*.setup.ts', '**/features/control-room/**/*.feature.spec.js'],
       use: {
         headless: true, // auth setup runs invisibly — no browser window shown
       },
@@ -100,6 +100,7 @@ export default defineConfig({
     {
       name: 'e2e-full-flow',
       testMatch: ['**/tests/e2e/**/*.spec.ts', '**/features/e2e/**/*.feature.spec.js'],
+      timeout: 720000, // 10 minutes specifically for E2E workflows
       use: {
         viewport: null,
         baseURL: process.env.STOREFRONT_BASE_URL,

@@ -18,6 +18,7 @@ node_modules/
 # Generated on every run — large, binary, and machine-specific.
 test-results/
 playwright-report/
+.features-gen/
 
 # Individual artifact types (in case paths differ per project)
 **/*.webm
