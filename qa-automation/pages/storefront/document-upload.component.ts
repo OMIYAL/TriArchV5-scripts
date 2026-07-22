@@ -26,16 +26,12 @@ export class DocumentUploadComponent {
 
   private getUploadTrigger(mode: 'service' | 'project' | 'any'): Locator {
     if (mode === 'service') {
-      return this.page
-        .locator('#OpenSupportingDocumentButton')
-        .or(this.page.getByRole('button', { name: /Supporting documents|Upload document|Add document/i }))
-        .and(this.page.locator(':visible'))
-        .first();
+      return this.page.locator('#OpenSupportingDocumentButton:visible').first();
     }
     if (mode === 'project') {
-      return this.page.locator('#AddDocumentButton');
+      return this.page.locator('#AddDocumentButton:visible').first();
     }
-    return this.page.locator('#OpenSupportingDocumentButton, #AddDocumentButton').first();
+    return this.page.locator('#OpenSupportingDocumentButton:visible, #AddDocumentButton:visible').first();
   }
 
   /** Open the Bootstrap offcanvas even when Mimik/xvfb swallows the click. */
@@ -43,30 +39,38 @@ export class DocumentUploadComponent {
     const panel = this.resolveUploadPanel(mode);
 
     await trigger.scrollIntoViewIfNeeded();
-    if (isMimikGuideMode()) {
-      await guideClick(this.page, trigger).catch(async () => {
-        await trigger.click({ force: true });
-      });
-    } else {
-      await trigger.click({ force: true });
-    }
 
-    if (await panel.isVisible({ timeout: 4000 }).catch(() => false)) return panel;
-
+    // Prefer DOM / Bootstrap first — Playwright clicks often hang under Mimik+xvfb.
     await trigger.evaluate((el) => (el as HTMLElement).click()).catch(() => {});
-    if (await panel.isVisible({ timeout: 4000 }).catch(() => false)) return panel;
+    if (await panel.isVisible({ timeout: 3000 }).catch(() => false)) return panel;
 
     await this.page.evaluate(() => {
+      const btn = document.querySelector('#OpenSupportingDocumentButton, #AddDocumentButton') as HTMLElement | null;
+      btn?.click();
       const el = document.querySelector('#UploadDocumentPanel') as HTMLElement | null;
       if (!el) return;
-      el.classList.add('show');
-      el.style.visibility = 'visible';
-      el.removeAttribute('aria-hidden');
       const bs = (window as unknown as {
         bootstrap?: { Offcanvas?: { getOrCreateInstance: (n: Element) => { show: () => void } } };
       }).bootstrap;
-      bs?.Offcanvas?.getOrCreateInstance(el).show();
+      if (bs?.Offcanvas) {
+        bs.Offcanvas.getOrCreateInstance(el).show();
+        return;
+      }
+      el.classList.add('show');
+      el.style.visibility = 'visible';
+      el.removeAttribute('aria-hidden');
+      document.body.classList.add('overflow-hidden');
     });
+    if (await panel.isVisible({ timeout: 5000 }).catch(() => false)) return panel;
+
+    // Last resort: human-like click for Mimik capture.
+    if (isMimikGuideMode()) {
+      await guideClick(this.page, trigger, { force: true, timeout: 8000 }).catch(async () => {
+        await trigger.click({ force: true, timeout: 5000 });
+      });
+    } else {
+      await trigger.click({ force: true, timeout: 8000 });
+    }
 
     await panel.waitFor({ state: 'visible', timeout: 10000 });
     return panel;
