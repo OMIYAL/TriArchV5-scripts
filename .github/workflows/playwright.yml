@@ -63,7 +63,7 @@ jobs:
           TENANT_NAME: ${{ secrets.TENANT_NAME }}
           CITIZEN_USERNAME: ${{ secrets.CITIZEN_USERNAME }}
           CITIZEN_PASSWORD: ${{ secrets.CITIZEN_PASSWORD }}
-          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
+          SERVICE_NAME: ${{ secrets.SERVICE_NAME || 'Request SDTest1 Review' }}
           STRIPE_TEST_EMAIL: ${{ secrets.STRIPE_TEST_EMAIL }}
           STRIPE_TEST_CARD_NUMBER: ${{ secrets.STRIPE_TEST_CARD_NUMBER }}
           STRIPE_TEST_EXPIRATION: ${{ secrets.STRIPE_TEST_EXPIRATION }}

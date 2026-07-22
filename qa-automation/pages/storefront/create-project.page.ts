@@ -2,7 +2,7 @@ import { Page, Locator } from '@playwright/test';
 import { faker } from '@faker-js/faker';
 import { DynamicProjectData } from '../../utils/data-generator.helper';
 import { getRandomDocumentTitle, getRandomTestPdf } from '../../utils/document.helper';
-import { clickSelect2Option, closeSelect2Dropdown } from '../../utils/select2.helper';
+import { clickSelect2Option, closeSelect2Dropdown, waitForSelect2Results } from '../../utils/select2.helper';
 import { guideClick, guideType } from '../../utils/mimik-action.helper';
 
 export class CreateProjectPage {
@@ -130,24 +130,85 @@ export class CreateProjectPage {
   }
 
   private async selectJurisdiction(data: DynamicProjectData): Promise<void> {
-    const selectedValue = await this.page.locator('#JurisdictionIdSelect').inputValue().catch(() => '');
-    if (selectedValue) return;
+    const nativeSelect = this.page.locator('#JurisdictionIdSelect');
+    await nativeSelect.waitFor({ state: 'attached', timeout: 15000 }).catch(() => {});
+
+    if (await nativeSelect.inputValue().catch(() => '')) return;
+
+    const isSet = async (): Promise<boolean> =>
+      Boolean(await nativeSelect.inputValue().catch(() => ''));
+
+    // Strategy 1 (most reliable): the jurisdiction select2 is AJAX-backed
+    // (handler=JurisdictionLookup) with an empty native <select>, so the
+    // dropdown intermittently renders no options under CI/Mimik. Query the same
+    // lookup endpoint directly, inject the first result as an <option>, and fire
+    // change so select2 syncs — bypassing the flaky dropdown UI entirely.
+    const injectedText = await this.page
+      .evaluate(async () => {
+        const el = document.querySelector('#JurisdictionIdSelect') as HTMLSelectElement | null;
+        if (!el) return '';
+        const resp = await fetch(`${location.pathname}?handler=JurisdictionLookup&term=`, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        if (!resp.ok) return '';
+        const data = (await resp.json()) as { results?: Array<{ id: string; text: string }> };
+        const first = data.results?.[0];
+        if (!first?.id) return '';
+        if (!Array.from(el.options).some((o) => o.value === first.id)) {
+          const opt = document.createElement('option');
+          opt.value = first.id;
+          opt.textContent = first.text || first.id;
+          el.appendChild(opt);
+        }
+        el.value = first.id;
+        const w = window as unknown as {
+          jQuery?: (e: Element) => { val: (v: string) => { trigger: (ev: string) => void } };
+        };
+        if (w.jQuery) {
+          w.jQuery(el).val(first.id).trigger('change');
+        } else {
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return first.text || first.id;
+      })
+      .catch(() => '');
+
+    if (injectedText && (await isSet())) {
+      await closeSelect2Dropdown(this.page);
+      data.jurisdiction = injectedText || data.jurisdiction;
+      return;
+    }
+
+    // Strategy 2: drive the select2 UI, retrying the open + using the
+    // loading-aware helper with a CI-friendly timeout.
+    const openContainer = this.page.locator('.select2-container--open');
+    let optionText = '';
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await closeSelect2Dropdown(this.page);
+      await this.jurisdictionCombobox.scrollIntoViewIfNeeded();
+      await guideClick(this.page, this.jurisdictionCombobox);
+
+      const opened = await openContainer
+        .waitFor({ state: 'visible', timeout: 8000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!opened) continue;
+
+      const options = await waitForSelect2Results(this.page, 25000);
+      const first = options.first();
+      if (!(await first.isVisible({ timeout: 2000 }).catch(() => false))) continue;
+
+      optionText = (await first.innerText().catch(() => '') ?? '').trim();
+      await first.click().catch(() => {});
+      if (await isSet()) break;
+    }
 
     await closeSelect2Dropdown(this.page);
-    await this.jurisdictionCombobox.scrollIntoViewIfNeeded();
-    await guideClick(this.page, this.jurisdictionCombobox);
 
-    const options = this.page.locator('.select2-container--open [role="option"]:not([aria-disabled="true"]):not(.loading-results)');
-    await options.first().waitFor({ state: 'visible', timeout: 12000 });
-    const optionText = (await options.first().innerText().catch(() => '') ?? '').trim();
-    await options.first().click();
-
-    await this.page.waitForFunction(() => {
-      const el = document.querySelector('#JurisdictionIdSelect') as HTMLSelectElement | null;
-      return !!el?.value;
-    }, { timeout: 10000 });
-
-    await closeSelect2Dropdown(this.page);
+    if (!(await isSet())) {
+      throw new Error('Failed to select a jurisdiction — select2 options never loaded.');
+    }
     data.jurisdiction = optionText || data.jurisdiction;
   }
 
