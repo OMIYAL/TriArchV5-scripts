@@ -129,6 +129,7 @@ When('completes all required form steps and checklists', async ({ page }) => {
   const submitButton = page.getByRole('button', { name: /Submit application/i });
   const nextButton = page.getByRole('button', { name: 'Next', exact: true }).and(page.locator(':visible')).last();
   let serviceDocUploaded = false;
+  let uploadFailures = 0;
 
   for (let attempt = 0; attempt < 15; attempt++) {
     await page.waitForTimeout(1000);
@@ -182,7 +183,15 @@ When('completes all required form steps and checklists', async ({ page }) => {
     // Upload Documents
     if (!serviceDocUploaded) {
       const uploaded = await new DocumentUploadComponent(page).uploadIfVisible(undefined, undefined, 'service');
-      if (uploaded) serviceDocUploaded = true;
+      if (uploaded) {
+        serviceDocUploaded = true;
+        uploadFailures = 0;
+      } else if (await page.locator('#OpenSupportingDocumentButton').isVisible({ timeout: 500 }).catch(() => false)) {
+        uploadFailures += 1;
+        if (uploadFailures >= 3) {
+          throw new Error('Supporting document upload panel failed to open after 3 attempts.');
+        }
+      }
     }
 
     // Click Next

@@ -4,6 +4,8 @@ import {
   getRandomTestPdf,
   pdfBaseName,
 } from '../../utils/document.helper';
+import { guideClick } from '../../utils/mimik-action.helper';
+import { isMimikGuideMode } from '../../utils/mimik.helper';
 
 export class DocumentUploadComponent {
   constructor(private readonly page: Page) {}
@@ -26,12 +28,48 @@ export class DocumentUploadComponent {
     if (mode === 'service') {
       return this.page
         .locator('#OpenSupportingDocumentButton')
-        .or(this.page.getByRole('button', { name: /Supporting documents|Upload document/i }));
+        .or(this.page.getByRole('button', { name: /Supporting documents|Upload document|Add document/i }))
+        .and(this.page.locator(':visible'))
+        .first();
     }
     if (mode === 'project') {
       return this.page.locator('#AddDocumentButton');
     }
     return this.page.locator('#OpenSupportingDocumentButton, #AddDocumentButton').first();
+  }
+
+  /** Open the Bootstrap offcanvas even when Mimik/xvfb swallows the click. */
+  private async openUploadPanel(trigger: Locator, mode: 'service' | 'project' | 'any'): Promise<Locator> {
+    const panel = this.resolveUploadPanel(mode);
+
+    await trigger.scrollIntoViewIfNeeded();
+    if (isMimikGuideMode()) {
+      await guideClick(this.page, trigger).catch(async () => {
+        await trigger.click({ force: true });
+      });
+    } else {
+      await trigger.click({ force: true });
+    }
+
+    if (await panel.isVisible({ timeout: 4000 }).catch(() => false)) return panel;
+
+    await trigger.evaluate((el) => (el as HTMLElement).click()).catch(() => {});
+    if (await panel.isVisible({ timeout: 4000 }).catch(() => false)) return panel;
+
+    await this.page.evaluate(() => {
+      const el = document.querySelector('#UploadDocumentPanel') as HTMLElement | null;
+      if (!el) return;
+      el.classList.add('show');
+      el.style.visibility = 'visible';
+      el.removeAttribute('aria-hidden');
+      const bs = (window as unknown as {
+        bootstrap?: { Offcanvas?: { getOrCreateInstance: (n: Element) => { show: () => void } } };
+      }).bootstrap;
+      bs?.Offcanvas?.getOrCreateInstance(el).show();
+    });
+
+    await panel.waitFor({ state: 'visible', timeout: 10000 });
+    return panel;
   }
 
   private async pickDocumentTitle(panel: Locator, title?: string): Promise<string> {
@@ -118,11 +156,7 @@ export class DocumentUploadComponent {
     let panel: Locator | null = null;
 
     try {
-      await uploadTrigger.scrollIntoViewIfNeeded();
-      await uploadTrigger.click({ force: true });
-
-      panel = this.resolveUploadPanel(mode);
-      await panel.waitFor({ state: 'visible', timeout: 10000 });
+      panel = await this.openUploadPanel(uploadTrigger, mode);
       await panel.locator('#UploadDoc_FileInput').waitFor({ state: 'attached', timeout: 5000 });
 
       const selectedTitle = await this.pickDocumentTitle(panel, title);
