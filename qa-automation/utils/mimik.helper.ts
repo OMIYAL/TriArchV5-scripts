@@ -99,14 +99,25 @@ export class MimikHelper {
       return;
     }
 
-    const panel = sidepanelPage;
+    let panel = sidepanelPage;
+    if (!panel || panel.isClosed()) {
+      // Recover: find any open Mimik sidepanel tab.
+      panel =
+        this.context.pages().find((p) => {
+          if (p.isClosed()) return false;
+          return /chrome-extension:\/\/.+\/sidepanel\.html/i.test(p.url());
+        }) ?? null;
+      sidepanelPage = panel;
+    }
+
     if (!panel || panel.isClosed()) {
       throw new Error(
         'Mimik sidepanel is not available. Ensure "Mimik recording is started" ran before export.',
       );
     }
 
-    await panel.bringToFront();
+    console.log('>>> Stopping Mimik recording…');
+    await panel.bringToFront().catch(() => {});
 
     const findFullviewPage = (): Page | undefined =>
       this.context.pages().find((p) => {
@@ -116,23 +127,32 @@ export class MimikHelper {
 
     const fullviewPromise = this.context
       .waitForEvent('page', {
-        timeout: 10000,
+        timeout: 20000,
         predicate: (p) => /chrome-extension:\/\/.+\/fullview\.html/i.test(p.url()),
       })
       .catch(() => null);
 
-    const finishBtn = panel.getByRole('button', { name: /Finish Recording|Stop Recording/i });
-    await finishBtn.waitFor({ state: 'visible', timeout: 30000 });
-    await panel.bringToFront();
-    try {
-      await finishBtn.click({ timeout: 5000 });
-    } catch {
-      await finishBtn.click({ force: true, timeout: 10000 });
+    // Click Finish via DOM — Playwright click/scroll often hangs on the Mimik sidepanel.
+    const finishClicked = await panel
+      .evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((b) =>
+          /Finish Recording|Stop Recording/i.test(b.textContent || ''),
+        ) as HTMLButtonElement | undefined;
+        if (!btn) return false;
+        btn.click();
+        return true;
+      })
+      .catch(() => false);
+
+    if (!finishClicked) {
+      const finishBtn = panel.getByRole('button', { name: /Finish Recording|Stop Recording/i });
+      await finishBtn.waitFor({ state: 'visible', timeout: 15000 });
+      await finishBtn.dispatchEvent('click');
     }
 
     let fullview = (await fullviewPromise) ?? findFullviewPage();
 
-    for (let attempt = 0; !fullview && attempt < 15; attempt++) {
+    for (let attempt = 0; !fullview && attempt < 20; attempt++) {
       await sleep(1000);
       fullview = findFullviewPage();
     }
@@ -140,6 +160,7 @@ export class MimikHelper {
     if (!fullview) {
       throw new Error('Mimik fullview did not open after stopping recording.');
     }
+    console.log('>>> Mimik fullview opened — exporting…');
     await fullview.waitForLoadState('domcontentloaded');
 
     // Allow guide title / step list + in-flight screenshot writes to settle.
@@ -151,15 +172,22 @@ export class MimikHelper {
       .waitFor({ state: 'visible', timeout: 60000 })
       .catch(() => {});
 
-    await fullview.bringToFront();
+    await fullview.bringToFront().catch(() => {});
 
     const exportButton = fullview.getByRole('button', { name: 'Export' });
     await exportButton.waitFor({ state: 'visible', timeout: 60000 });
 
     const downloadPromise = fullview.waitForEvent('download', { timeout: 120000 });
 
-    await exportButton.click();
-    await fullview.getByRole('button', { name: EXPORT_LABELS[format] }).click();
+    await exportButton.evaluate((el) => (el as HTMLElement).click()).catch(async () => {
+      await exportButton.click({ force: true });
+    });
+
+    const formatBtn = fullview.getByRole('button', { name: EXPORT_LABELS[format] });
+    await formatBtn.waitFor({ state: 'visible', timeout: 15000 });
+    await formatBtn.evaluate((el) => (el as HTMLElement).click()).catch(async () => {
+      await formatBtn.click({ force: true });
+    });
 
     const download = await downloadPromise;
 
@@ -175,7 +203,7 @@ export class MimikHelper {
       `\n>>> Mimik ${format.toUpperCase()} export saved: ${dest} (${size} bytes)\n`,
     );
 
-    await this.workflowPage.bringToFront();
+    await this.workflowPage.bringToFront().catch(() => {});
 
     if (sidepanelPage && !sidepanelPage.isClosed()) {
       await sidepanelPage.close().catch(() => {});

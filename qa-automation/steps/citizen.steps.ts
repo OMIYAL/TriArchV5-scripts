@@ -85,19 +85,32 @@ When('creates a new project for the service application', async ({ page }) => {
   const rawCreatePage = createProjectPage.getRawPage();
   await rawCreatePage.waitForURL(/projectId=|services\/Apply/i, { timeout: 60000 }).catch(() => {});
 
+  const projectId =
+    createProjectPage.getCreatedProjectId() ||
+    new URL(rawCreatePage.isClosed() ? page.url() : rawCreatePage.url()).searchParams.get('projectId') ||
+    new URL(page.url()).searchParams.get('projectId') ||
+    '';
+
   // Only close a real popup — never close the main apply tab.
   if (!rawCreatePage.isClosed() && rawCreatePage !== page) {
     await rawCreatePage.close();
   }
 
-  if (!/services\/Apply/i.test(page.url())) {
-    if (targetServiceUrl) {
-      let applyUrl = new URL(targetServiceUrl, process.env.STOREFRONT_BASE_URL || '');
-      applyUrl.searchParams.set('__tenant', process.env.TENANT_NAME || '');
-      await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  // Always land on Apply with projectId so the combobox binds without waiting on lookup.
+  if (targetServiceUrl) {
+    const applyUrl = new URL(targetServiceUrl, process.env.STOREFRONT_BASE_URL || '');
+    applyUrl.searchParams.set('__tenant', process.env.TENANT_NAME || '');
+    if (projectId) {
+      applyUrl.searchParams.set('projectId', projectId);
+      console.log(`Returning to Apply with projectId=${projectId}`);
     } else {
-      await page.reload({ waitUntil: 'domcontentloaded' });
+      console.log('No projectId captured after create — Apply may need dropdown selection.');
     }
+    await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  } else if (/services\/Apply/i.test(page.url()) && projectId && !/projectId=/i.test(page.url())) {
+    const applyUrl = new URL(page.url());
+    applyUrl.searchParams.set('projectId', projectId);
+    await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 60000 });
   } else {
     await page.reload({ waitUntil: 'domcontentloaded' });
   }
