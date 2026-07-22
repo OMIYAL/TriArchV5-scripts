@@ -4,8 +4,6 @@ import {
   getRandomTestPdf,
   pdfBaseName,
 } from '../../utils/document.helper';
-import { guideClick } from '../../utils/mimik-action.helper';
-import { isMimikGuideMode } from '../../utils/mimik.helper';
 
 export class DocumentUploadComponent {
   constructor(private readonly page: Page) {}
@@ -26,21 +24,27 @@ export class DocumentUploadComponent {
 
   private getUploadTrigger(mode: 'service' | 'project' | 'any'): Locator {
     if (mode === 'service') {
-      return this.page.locator('#OpenSupportingDocumentButton:visible').first();
+      return this.page
+        .locator('#OpenSupportingDocumentButton')
+        .or(this.page.getByRole('button', { name: /Supporting documents|Upload document/i }))
+        .first();
     }
     if (mode === 'project') {
-      return this.page.locator('#AddDocumentButton:visible').first();
+      return this.page.locator('#AddDocumentButton').first();
     }
-    return this.page.locator('#OpenSupportingDocumentButton:visible, #AddDocumentButton:visible').first();
+    return this.page
+      .locator('#OpenSupportingDocumentButton, #AddDocumentButton')
+      .or(this.page.getByRole('button', { name: /Supporting documents|Upload document/i }))
+      .first();
   }
 
   /** Open the Bootstrap offcanvas even when Mimik/xvfb swallows the click. */
   private async openUploadPanel(trigger: Locator, mode: 'service' | 'project' | 'any'): Promise<Locator> {
     const panel = this.resolveUploadPanel(mode);
 
-    await trigger.scrollIntoViewIfNeeded();
+    await trigger.scrollIntoViewIfNeeded().catch(() => {});
 
-    // Prefer DOM / Bootstrap first — Playwright clicks often hang under Mimik+xvfb.
+    // Prefer DOM / Bootstrap — Playwright clicks often hang under Mimik+xvfb.
     await trigger.evaluate((el) => (el as HTMLElement).click()).catch(() => {});
     if (await panel.isVisible({ timeout: 3000 }).catch(() => false)) return panel;
 
@@ -59,20 +63,12 @@ export class DocumentUploadComponent {
       el.classList.add('show');
       el.style.visibility = 'visible';
       el.removeAttribute('aria-hidden');
-      document.body.classList.add('overflow-hidden');
     });
     if (await panel.isVisible({ timeout: 5000 }).catch(() => false)) return panel;
 
-    // Last resort: human-like click for Mimik capture.
-    if (isMimikGuideMode()) {
-      await guideClick(this.page, trigger, { force: true, timeout: 8000 }).catch(async () => {
-        await trigger.click({ force: true, timeout: 5000 });
-      });
-    } else {
-      await trigger.click({ force: true, timeout: 8000 });
-    }
-
-    await panel.waitFor({ state: 'visible', timeout: 10000 });
+    // Short force-click only — never guideClick here (hangs under xvfb).
+    await trigger.click({ force: true, timeout: 5000 }).catch(() => {});
+    await panel.waitFor({ state: 'visible', timeout: 8000 });
     return panel;
   }
 

@@ -182,14 +182,23 @@ When('completes all required form steps and checklists', async ({ page }) => {
 
     // Upload Documents
     if (!serviceDocUploaded) {
-      const uploaded = await new DocumentUploadComponent(page).uploadIfVisible(undefined, undefined, 'service');
-      if (uploaded) {
-        serviceDocUploaded = true;
-        uploadFailures = 0;
-      } else if (await page.locator('#OpenSupportingDocumentButton').isVisible({ timeout: 500 }).catch(() => false)) {
-        uploadFailures += 1;
-        if (uploadFailures >= 3) {
-          throw new Error('Supporting document upload panel failed to open after 3 attempts.');
+      const uploadTrigger = page
+        .locator('#OpenSupportingDocumentButton')
+        .or(page.getByRole('button', { name: /Supporting documents|Upload document/i }))
+        .first();
+      const uploadVisible = await uploadTrigger.isVisible({ timeout: 800 }).catch(() => false);
+
+      if (uploadVisible) {
+        const uploaded = await new DocumentUploadComponent(page).uploadIfVisible(undefined, undefined, 'service');
+        if (uploaded) {
+          serviceDocUploaded = true;
+          uploadFailures = 0;
+        } else {
+          uploadFailures += 1;
+          console.log(`Supporting document upload attempt ${uploadFailures}/3 failed.`);
+          if (uploadFailures >= 3) {
+            throw new Error('Supporting document upload panel failed to open after 3 attempts.');
+          }
         }
       }
     }
