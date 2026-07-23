@@ -189,6 +189,16 @@ export class CreateProjectPage {
       await contactPanel.locator('#Input_Email').fill(faker.internet.email());
       await contactPanel.locator('#Input_Phone').fill(faker.string.numeric(10));
 
+      // All visible fields are filled. Now scroll down to the "Send invite email" checkbox
+      // which is pre-checked by default but hidden below the fold.
+      // Uncheck it so no bounce emails are sent to Faker-generated addresses.
+      const sendInviteCheckbox = contactPanel.locator('#Input_SendInvite');
+      await sendInviteCheckbox.scrollIntoViewIfNeeded();
+      const isInviteChecked = await sendInviteCheckbox.isChecked();
+      if (isInviteChecked) {
+        await sendInviteCheckbox.click();
+      }
+
       const saveContactButton = contactPanel.locator('button.btn-primary').filter({ hasText: /Add contact/i }).last();
       await saveContactButton.click();
 
