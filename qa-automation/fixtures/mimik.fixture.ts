@@ -13,6 +13,9 @@ function toChromiumPath(dir: string): string {
 }
 
 /**
+ * BDD fixture: guide-mimik launches Chromium with the Mimik extension
+ * (launchPersistentContext). Other projects use a normal browser context.
+ */
 export const test = base.extend<object>({
   context: async ({ playwright }, use, testInfo) => {
     const isMimikGuide = testInfo.project.name === 'guide-mimik';
