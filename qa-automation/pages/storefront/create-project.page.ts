@@ -277,6 +277,9 @@ export class CreateProjectPage {
   }
 
   /**
+   * Open → type Colorado → click the real Select2 result (all Mimik-visible).
+   * Falls back to JurisdictionLookup GUID bind only if the click leaves a non-GUID.
+   */
   private async selectJurisdictionViaLookup(): Promise<string | null> {
     await closeSelect2Dropdown(this.page);
     await this.jurisdictionCombobox.scrollIntoViewIfNeeded().catch(() => {});
