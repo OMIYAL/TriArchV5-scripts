@@ -10,4 +10,6 @@ Feature: Storefront Citizen Service Request Submission
     And completes the intake fee payment via Stripe if required
     Then the service request should be submitted successfully
     And the tracking number and service request state should be saved
-    And Mimik recording is stopped and the guide is exported
+    And Mimik recording is stopped
+    And the Mimik guide is opened from the side panel
+    And the Mimik guide is exported as PDF

@@ -8,20 +8,11 @@ import {
   resetMimikSidepanel,
 } from '../utils/mimik.helper';
 
-/** Chrome/Chromium flag expects forward slashes on Windows. */
 function toChromiumPath(dir: string): string {
   return path.resolve(dir).replace(/\\/g, '/');
 }
 
 /**
- * Custom BDD test instance.
- * When running the `guide-mimik` project, launches Chromium with an unpacked
- * Mimik extension via launchPersistentContext (required for MV3 extensions).
- * Otherwise uses a normal browser context so smoke/CI runs stay unchanged.
- *
- * Sets MIMIK_GUIDE=1 so steps/pages that still check the env flag stay in sync
- * without needing scripts/run-guide.mjs.
- */
 export const test = base.extend<object>({
   context: async ({ playwright }, use, testInfo) => {
     const isMimikGuide = testInfo.project.name === 'guide-mimik';
@@ -53,39 +44,27 @@ export const test = base.extend<object>({
     const rawExtensionPath = process.env.MIMIK_EXTENSION_PATH?.trim();
     if (!rawExtensionPath) {
       throw new Error(
-        'guide-mimik requires MIMIK_EXTENSION_PATH in .env pointing to an unpacked Mimik build (folder with manifest.json).',
+        'guide-mimik requires MIMIK_EXTENSION_PATH pointing to an unpacked Mimik build (manifest.json).',
       );
     }
 
-    // Chromium --load-extension expects forward slashes on Windows.
     const extensionPath = toChromiumPath(rawExtensionPath);
-
-    const manifestPath = path.join(extensionPath, 'manifest.json');
-    if (!fs.existsSync(manifestPath)) {
-      throw new Error(
-        `MIMIK_EXTENSION_PATH is missing manifest.json: ${extensionPath}`,
-      );
+    if (!fs.existsSync(path.join(extensionPath, 'manifest.json'))) {
+      throw new Error(`MIMIK_EXTENSION_PATH is missing manifest.json: ${extensionPath}`);
     }
 
     const exportDir = getMimikExportDir();
-
-    // Fresh profile per run so TriArch auth cookies from a prior guide run
-    // do not skip login and break the BDD flow.
     const safeId = testInfo.testId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const userDataDir = path.resolve(
-      __dirname,
-      `../.mimik-profile/run-${safeId}-${Date.now()}`,
-    );
+    const userDataDir = path.resolve(__dirname, `../.mimik-profile/run-${safeId}-${Date.now()}`);
     fs.mkdirSync(userDataDir, { recursive: true });
-
-    const captureDelayMs = getMimikCaptureDelayMs();
 
     const context = await chromium.launchPersistentContext(userDataDir, {
       channel: 'chromium',
       headless: false,
       viewport: null,
       acceptDownloads: true,
-      slowMo: captureDelayMs,
+      // Land downloads in mimik-exports — the profile dir is deleted on teardown.
+      downloadsPath: exportDir,
       baseURL: projectUse.baseURL as string | undefined,
       ignoreHTTPSErrors: Boolean(projectUse.ignoreHTTPSErrors),
       args: [
@@ -95,9 +74,8 @@ export const test = base.extend<object>({
       ],
     });
 
-    // Mimik opens an onboarding tab on first load; that can become Playwright's
-    // default `page` and break storefront steps. Close extension pages first.
-    await new Promise((r) => setTimeout(r, 1500));
+    // Close Mimik onboarding tabs so the storefront page fixture stays clean.
+    await new Promise((r) => setTimeout(r, 300));
     for (const p of [...context.pages()]) {
       if (/^chrome-extension:\/\//i.test(p.url())) {
         await p.close().catch(() => {});
@@ -107,9 +85,8 @@ export const test = base.extend<object>({
       await context.newPage();
     }
 
-    // Export is saved in mimik.helper.ts stopAndExport() via await download.saveAs().
-    console.log(`\n>>> Mimik exports will save to: ${exportDir}\n`);
-    console.log(`>>> Mimik capture delay (slowMo): ${captureDelayMs}ms\n`);
+    console.log(`>>> Mimik exports: ${exportDir}`);
+    console.log(`>>> Mimik capture delay: ${getMimikCaptureDelayMs()}ms`);
 
     try {
       await use(context);

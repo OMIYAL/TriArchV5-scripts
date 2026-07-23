@@ -1,8 +1,10 @@
-import { Page, Locator } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 import { BasePage } from '../base.page';
 import { CreateProjectPage } from './create-project.page';
 import { DocumentUploadComponent } from './document-upload.component';
 import { guideClick } from '../../utils/mimik-action.helper';
+import { drainMimikCapture, isMimikGuideMode } from '../../utils/mimik.helper';
+
 const CREATE_PROJECT_URL = /PermitProjects\/Create/i;
 
 export class ServiceApplyPage extends BasePage {
@@ -73,9 +75,15 @@ export class ServiceApplyPage extends BasePage {
 
   async waitForProjectCombobox(): Promise<void> {
     await this.page
-      .waitForURL(/services\/Apply/i, this.urlWait(45000))
+      .waitForURL(/services\/Apply|PermitProjects\/Create/i)
       .catch(() => {});
-    await this.projectCombobox.waitFor({ state: 'visible', timeout: 45000 });
+    if (CREATE_PROJECT_URL.test(this.page.url())) return;
+
+    // Combobox can lag under Mimik; Create link alone is enough to proceed.
+    await Promise.race([
+      this.projectCombobox.waitFor({ state: 'visible' }),
+      this.createProjectControl().waitFor({ state: 'visible' }),
+    ]);
   }
 
   /** Build the absolute Create URL from the control's href, preserving __tenant. */
@@ -89,7 +97,6 @@ export class ServiceApplyPage extends BasePage {
   }
 
   async openCreateProjectPopup(): Promise<CreateProjectPage> {
-    // Service click / prior step sometimes already lands on Create (same tab).
     const existing = this.findCreateProjectPage();
     if (existing) {
       console.log('Already on PermitProjects/Create — filling on current page (no popup).');
@@ -97,144 +104,133 @@ export class ServiceApplyPage extends BasePage {
       return new CreateProjectPage(existing);
     }
 
-    await this.projectCombobox.waitFor({ state: 'visible', timeout: 45000 });
-
     const createControl = this.createProjectControl();
-    await createControl.waitFor({ state: 'visible', timeout: 45000 });
+    await createControl.waitFor({ state: 'visible' });
     await createControl.scrollIntoViewIfNeeded();
 
-    // Preferred path: the "+ New project" control is an anchor pointing at
-    // PermitProjects/Create. Popups are unreliable under the Mimik extension +
-    // xvfb (CI leaves an orphan about:blank tab), so navigate the apply tab
-    // directly whenever an href is available.
+    // Guide mode: real click so Mimik captures (it intercepts <a> then navigates).
+    // Non-guide: href goto is more reliable under CI/xvfb.
+    if (isMimikGuideMode()) {
+      await guideClick(this.page, createControl, { noWaitAfter: true });
+      // Mimik intercepts <a>, screenshots, then navigates — wait before goto fallback.
+      const sameTab = await this.page
+        .waitForURL(CREATE_PROJECT_URL, { waitUntil: 'commit', timeout: 60000 })
+        .then(() => true)
+        .catch(() => false);
+      if (sameTab) {
+        await this.page.bringToFront();
+        return new CreateProjectPage(this.page);
+      }
+
+      const href = await createControl.getAttribute('href').catch(() => null);
+      if (href && /PermitProjects(\/|%2F)Create/i.test(href)) {
+        const createUrl = this.resolveCreateUrlFromHref(href);
+        console.log(`Create click did not navigate — opening: ${createUrl}`);
+        await this.page.goto(createUrl, { waitUntil: 'domcontentloaded' });
+        await this.page.bringToFront();
+        return new CreateProjectPage(this.page);
+      }
+
+      const target = await this.waitForCreateProjectPage(60000);
+      await target.page.bringToFront();
+      await target.page.waitForLoadState('domcontentloaded').catch(() => {});
+      return new CreateProjectPage(target.page);
+    }
+
     const href = await createControl.getAttribute('href').catch(() => null);
     if (href && /PermitProjects(\/|%2F)Create/i.test(href)) {
       const createUrl = this.resolveCreateUrlFromHref(href);
       console.log(`Navigating directly to Create project page: ${createUrl}`);
-      await this.page.goto(createUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await this.page
-        .waitForURL(CREATE_PROJECT_URL, { timeout: 30000 })
-        .catch(() => {});
-
+      await this.page.goto(createUrl, { waitUntil: 'domcontentloaded' });
       if (CREATE_PROJECT_URL.test(this.page.url())) {
         await this.page.bringToFront();
         return new CreateProjectPage(this.page);
       }
-      console.log('Direct navigation did not land on Create — falling back to click.');
     }
-
-    // Fallback: click the control and watch for either a popup or a same-tab nav.
-    const popupPromise = this.page
-      .waitForEvent('popup', { timeout: 15000 })
-      .catch(() => null);
 
     await guideClick(this.page, createControl);
-
-    const popup = await popupPromise;
-    if (popup) {
-      await popup.waitForLoadState('domcontentloaded').catch(() => {});
-      const reached = await popup
-        .waitForURL(CREATE_PROJECT_URL, { timeout: 30000 })
-        .then(() => true)
-        .catch(() => false);
-
-      // A blank/blocked popup is useless — recover by navigating it (or the
-      // apply tab) to the resolved Create URL instead of timing out.
-      if (!reached && href && /PermitProjects(\/|%2F)Create/i.test(href)) {
-        const createUrl = this.resolveCreateUrlFromHref(href);
-        const navPage = popup.isClosed() ? this.page : popup;
-        await navPage
-          .goto(createUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
-          .catch(() => {});
-      }
-
-      if (!popup.isClosed() && CREATE_PROJECT_URL.test(popup.url())) {
-        await popup.bringToFront();
-        console.log('Create project opened in a popup/new tab.');
-        return new CreateProjectPage(popup);
-      }
-    }
-
-    const target = await this.waitForCreateProjectPage(90000);
-
+    const target = await this.waitForCreateProjectPage();
     await target.page.bringToFront();
     await target.page.waitForLoadState('domcontentloaded').catch(() => {});
-
-    if (target.kind === 'popup') {
-      console.log('Create project opened in a popup/new tab.');
-    } else {
-      console.log('Create project opened in the same tab (no popup).');
-    }
-
     return new CreateProjectPage(target.page);
   }
 
   async selectCreatedProject(projectName: string): Promise<void> {
     const combobox = this.projectCombobox;
-    await combobox.waitFor({ state: 'visible', timeout: 15000 });
+    await combobox.waitFor({ state: 'visible' });
 
     const projectIdMatch = this.page.url().match(/projectId=([^&]+)/i);
     if (projectIdMatch) {
       console.log(`Apply page already has projectId=${projectIdMatch[1]} in URL.`);
-
-      for (let wait = 0; wait < 8; wait++) {
-        if (this.page.isClosed()) return;
-
-        const currentLabel = (await combobox.innerText().catch(() => '') ?? '').trim();
-        const formReady = await this.page
-          .getByRole('navigation', { name: 'Service application steps' })
-          .isVisible({ timeout: 1000 })
-          .catch(() => false);
-
-        if (formReady && (currentLabel.includes(projectName) || !/no project/i.test(currentLabel))) {
-          console.log(`Project combobox ready with "${currentLabel}" — skipping dropdown selection.`);
-          return;
-        }
-
-        await this.page.waitForTimeout(1000);
-      }
-    }
-
-    for (let attempt = 0; attempt < 4; attempt++) {
-      if (this.page.isClosed()) return;
-
-      if (attempt > 0) {
-        console.log(`Project "${projectName}" not in dropdown yet — refreshing apply page (attempt ${attempt + 1}/4).`);
-        await this.page.reload({ waitUntil: 'domcontentloaded' });
-        await combobox.waitFor({ state: 'visible', timeout: 15000 });
-      }
-
+      await this.page
+        .getByRole('navigation', { name: 'Service application steps' })
+        .waitFor({ state: 'visible' })
+        .catch(() => {});
       const currentLabel = (await combobox.innerText().catch(() => '') ?? '').trim();
-      if (currentLabel.includes(projectName)) {
-        console.log(`Project "${projectName}" already selected in combobox.`);
-        break;
+      if (currentLabel.includes(projectName) || !/no project/i.test(currentLabel)) {
+        console.log(`Project combobox ready with "${currentLabel}" — skipping dropdown selection.`);
+        return;
       }
-
-      await combobox.scrollIntoViewIfNeeded();
-      await guideClick(this.page, combobox);
-
-      const projectOption = this.page.getByRole('option', { name: new RegExp(projectName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first();
-      const found = await projectOption.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false);
-
-      if (found) {
-        await projectOption.click();
-        console.log(`Selected newly created project "${projectName}" from dropdown.`);
-        break;
-      }
-
-      await this.page.keyboard.press('Escape').catch(() => {});
     }
+
+    const currentLabel = (await combobox.innerText().catch(() => '') ?? '').trim();
+    if (currentLabel.includes(projectName)) {
+      console.log(`Project "${projectName}" already selected in combobox.`);
+      return;
+    }
+
+    await guideClick(this.page, combobox);
+    const projectOption = this.page
+      .getByRole('option', { name: new RegExp(projectName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') })
+      .first();
+    await projectOption.waitFor({ state: 'visible' });
+    await guideClick(this.page, projectOption);
+    console.log(`Selected newly created project "${projectName}" from dropdown.`);
 
     await this.page
       .getByRole('navigation', { name: 'Service application steps' })
-      .waitFor({ state: 'visible', timeout: 15000 });
+      .waitFor({ state: 'visible' });
   }
 
   async uploadSupportingDocuments(): Promise<void> {
     await new DocumentUploadComponent(this.page).uploadRequired(undefined, undefined, 'service');
   }
 
-  async clickPayIntakeFee(): Promise<void> {
-    await guideClick(this.page, this.payIntakeFeeButton, { force: true });
+  /** Pay → StartPayment → GatewaySelection → Stripe (same tab). */
+  async payIntakeFeeAndOpenStripe(): Promise<void> {
+    const pay = this.payIntakeFeeButton;
+    await pay.waitFor({ state: 'visible' });
+    await expect(pay).toBeEnabled();
+    await this.page.bringToFront();
+    // Drain Mimik's screenshot queue so a navigating Pay control is not stuck behind backlog.
+    await drainMimikCapture(this.page);
+
+    const navigated = this.page.waitForURL(/Payment\/GatewaySelection|checkout\.stripe\.com/i, {
+      waitUntil: 'commit',
+      timeout: 90000,
+    });
+
+    // Real click for Mimik, then jQuery trigger if the toolbar handler ignored it.
+    await guideClick(this.page, pay, { force: true });
+    if (/services\/Apply/i.test(this.page.url())) {
+      await this.page
+        .evaluate(() => {
+          const w = window as unknown as { jQuery?: (s: string) => { trigger: (e: string) => void } };
+          if (w.jQuery) w.jQuery('#PayIntakeFeeButton').trigger('click');
+          else document.getElementById('PayIntakeFeeButton')?.click();
+        })
+        .catch(() => {});
+    }
+
+    await navigated;
+
+    if (/GatewaySelection/i.test(this.page.url())) {
+      const stripeNav = this.page.waitForURL(/checkout\.stripe\.com/i, {
+        waitUntil: 'commit',
+        timeout: 60000,
+      });
+      await guideClick(this.page, this.page.locator('#btnSubmit'), { force: true });
+      await stripeNav;
+    }
   }
 }

@@ -1,6 +1,7 @@
 import { Page, Locator } from '@playwright/test';
 import { faker } from '@faker-js/faker';
 import { BasePage } from '../base.page';
+import { guideClick } from '../../utils/mimik-action.helper';
 
 export class ServicesListingPage extends BasePage {
   private readonly moreServicesRegion: Locator;
@@ -17,17 +18,12 @@ export class ServicesListingPage extends BasePage {
   }
 
   private async expandMoreServicesIfNeeded(): Promise<void> {
-    if (await this.visibleServiceApplyLinks().count() > 0) return;
+    if ((await this.visibleServiceApplyLinks().count()) > 0) return;
+    if (!(await this.moreServicesRegion.isVisible({ timeout: 2000 }).catch(() => false))) return;
 
-    try {
-      if (await this.moreServicesRegion.isVisible({ timeout: 2000 })) {
-        await this.moreServicesRegion.scrollIntoViewIfNeeded();
-        await this.moreServicesRegion.click();
-        await this.page.waitForTimeout(500);
-      }
-    } catch {
-      // Region may not exist — proceed
-    }
+    await this.moreServicesRegion.scrollIntoViewIfNeeded();
+    await guideClick(this.page, this.moreServicesRegion);
+    await this.visibleServiceApplyLinks().first().waitFor({ state: 'visible' }).catch(() => {});
   }
 
   private serviceApplyLinks(): Locator {
@@ -87,8 +83,8 @@ export class ServicesListingPage extends BasePage {
 
     await selectedService.scrollIntoViewIfNeeded();
     await Promise.all([
-      this.page.waitForURL(/services\/Apply|Account\/Login|auth.*Login/i, { timeout: 60000 }),
-      selectedService.click(),
+      this.page.waitForURL(/services\/Apply|Account\/Login|auth.*Login/i, this.urlWait(60000)),
+      guideClick(this.page, selectedService),
     ]);
 
     return targetHref;
@@ -105,10 +101,17 @@ export class ServicesListingPage extends BasePage {
     if (await findLink().first().isVisible({ timeout: 5000 }).catch(() => false)) {
       const link = findLink().first();
       const targetHref = await link.getAttribute('href') || '';
-      await Promise.all([
-        this.page.waitForURL(/services\/Apply|Account\/Login|auth.*Login/i, { timeout: 60000 }),
-        this.click(link),
-      ]);
+      await this.click(link);
+      const navigated = await this.page
+        .waitForURL(/services\/Apply|Account\/Login|auth.*Login/i, this.urlWait(30000))
+        .then(() => true)
+        .catch(() => false);
+      // Mimik intercepts <a> clicks and navigates after screenshot — if that stalls, finish via href.
+      if (!navigated && targetHref) {
+        const abs = new URL(targetHref, this.page.url()).href;
+        console.log(`Service click did not navigate — opening: ${abs}`);
+        await this.page.goto(abs, { waitUntil: 'domcontentloaded' });
+      }
       return targetHref;
     }
 
@@ -124,7 +127,7 @@ export class ServicesListingPage extends BasePage {
         const link = findLink().first();
         const targetHref = await link.getAttribute('href') || '';
         await Promise.all([
-          this.page.waitForURL(/services\/Apply|Account\/Login|auth.*Login/i, { timeout: 60000 }),
+          this.page.waitForURL(/services\/Apply|Account\/Login|auth.*Login/i, this.urlWait(60000)),
           this.click(link),
         ]);
         return targetHref;

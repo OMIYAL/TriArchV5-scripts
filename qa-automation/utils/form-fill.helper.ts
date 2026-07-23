@@ -2,7 +2,7 @@ import { Page } from '@playwright/test';
 import { faker } from '@faker-js/faker';
 import { DynamicProjectData } from './data-generator.helper';
 import { selectFromSelect2Combobox, closeSelect2Dropdown } from './select2.helper';
-import { isMimikGuideMode } from './mimik.helper';
+import { isMimikGuideMode, waitForMimikCapture } from './mimik.helper';
 import { guideType } from './mimik-action.helper';
 
 const EMPTY_COMBOBOX_PATTERN = /select|choose|no project|enter jurisdiction|search jurisdiction/i;
@@ -76,7 +76,6 @@ async function fillEmptyComboboxes(page: Page, projectData?: DynamicProjectData 
       await closeSelect2Dropdown(page);
     });
     await closeSelect2Dropdown(page);
-    await page.waitForTimeout(200);
   }
 }
 
@@ -108,9 +107,10 @@ async function fillEmptyInputs(page: Page, projectData?: DynamicProjectData | nu
 
     if (isMimikGuideMode()) {
       await guideType(page, field, value).catch(async () => {
-        await field.click({ force: true }).catch(() => {});
+        await field.focus().catch(() => {});
         await field.fill(value).catch(() => {});
-        await page.waitForTimeout(200).catch(() => {});
+        await field.blur().catch(() => {});
+        await waitForMimikCapture(page);
       });
     } else {
       await field.fill(value).catch(async () => {
@@ -137,6 +137,7 @@ async function fillEmptySelects(page: Page): Promise<void> {
         const val = await first.getAttribute('value').catch(() => null);
         if (val) await select.selectOption(val).catch(() => {});
       });
+      await waitForMimikCapture(page);
     }
   }
 }
@@ -181,7 +182,11 @@ export async function fillApplicantFields(
     const shouldFill = !current || (isJurisdiction && projectData?.jurisdiction && current !== projectData.jurisdiction);
 
     if (shouldFill) {
-      await textbox.fill(isJurisdiction && projectData?.jurisdiction ? projectData.jurisdiction : value);
+      await guideType(
+        page,
+        textbox,
+        isJurisdiction && projectData?.jurisdiction ? projectData.jurisdiction : value,
+      );
     }
   }
 

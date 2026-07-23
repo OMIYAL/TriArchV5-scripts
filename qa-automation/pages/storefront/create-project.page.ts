@@ -1,15 +1,16 @@
 import { Page, Locator } from '@playwright/test';
 import { faker } from '@faker-js/faker';
 import { DynamicProjectData } from '../../utils/data-generator.helper';
-import { getRandomDocumentTitle, getRandomTestPdf } from '../../utils/document.helper';
-import {
-  clickSelect2Option,
-  closeSelect2Dropdown,
-} from '../../utils/select2.helper';
+import { clickSelect2Option, closeSelect2Dropdown } from '../../utils/select2.helper';
+import { waitForMimikCapture, drainMimikCapture } from '../../utils/mimik.helper';
 import { guideClick, guideType } from '../../utils/mimik-action.helper';
 
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export class CreateProjectPage {
-  private readonly page: Page;
+  private contactAdded = false;
+  private createdProjectId = '';
+
   private readonly jurisdictionCombobox: Locator;
   private readonly projectNameInput: Locator;
   private readonly streetAddressInput: Locator;
@@ -20,12 +21,11 @@ export class CreateProjectPage {
   private readonly heightInput: Locator;
   private readonly numberOfFloorsInput: Locator;
 
-  private contactAdded = false;
-  private createdProjectId = '';
-
-  constructor(page: Page) {
-    this.page = page;
-    this.jurisdictionCombobox = page.locator('span.select2-selection[aria-labelledby="select2-JurisdictionIdSelect-container"]');
+  constructor(private readonly page: Page) {
+    this.jurisdictionCombobox = page
+      .locator('span.select2-selection[aria-labelledby="select2-JurisdictionIdSelect-container"]')
+      .or(page.getByRole('combobox', { name: /jurisdiction/i }))
+      .first();
     this.projectNameInput = page.getByRole('textbox', { name: 'Project Name' });
     this.streetAddressInput = page.getByRole('textbox', { name: 'Street Address Line 1' });
     this.cityInput = page.getByRole('textbox', { name: 'City or Municipality' });
@@ -36,159 +36,105 @@ export class CreateProjectPage {
     this.numberOfFloorsInput = page.getByRole('spinbutton', { name: 'Number Of Floors' });
   }
 
+  getRawPage(): Page {
+    return this.page;
+  }
+
+  getCreatedProjectId(): string {
+    return this.createdProjectId;
+  }
+
   async completeFullFlow(projectData: DynamicProjectData): Promise<void> {
     await this.page.waitForURL(/PermitProjects\/Create/i, { timeout: 45000 });
     await this.page.bringToFront();
 
-    // Step 1: Project Details
     await this.page.getByRole('heading', { name: 'Project Details' }).waitFor({ state: 'visible', timeout: 45000 });
     await this.fillProjectDetailsStep(projectData);
     await this.advanceFromProjectDetails();
 
-    // Step 2: Building Characteristics
     await this.waitForWizardStep(2, /Building Characteristics/i);
     await this.fillBuildingCharacteristicsStep(projectData);
+    await drainMimikCapture(this.page);
     await this.advanceFromBuildingCharacteristics();
     this.captureProjectIdFromUrl();
 
-    // Step 3: Project Contacts
     await this.waitForWizardStep(3, /Project Contacts/i);
     await this.addProjectContact();
-    await this.advanceFromProjectContacts();
+    await this.advanceByNext(/Project related documents/i);
 
-    // Step 4: Documents
     await this.waitForWizardStep(4, /Project related documents/i);
-    
     await this.clickCreateProject();
   }
 
-  private async waitForWizardStep(stepNumber: number, headingPattern: RegExp, timeout = 25000): Promise<void> {
-    const stepUrl = new RegExp(`[?&]step=${stepNumber}(&|$)`);
-    const urlReached = await this.page.waitForURL(stepUrl, { timeout }).then(() => true).catch(() => false);
-    if (urlReached) return;
+  private async waitForWizardStep(stepNumber: number, heading: RegExp, timeout = 25000): Promise<void> {
+    if (await this.page.waitForURL(new RegExp(`[?&]step=${stepNumber}(&|$)`), { timeout }).then(() => true).catch(() => false)) {
+      return;
+    }
+    if (await this.page.locator(`[data-wizard-step="${stepNumber}"]:not(.ta-wizard-step--hidden)`).waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) {
+      return;
+    }
+    if (await this.headingVisible(heading, 8000)) return;
 
-    const panelVisible = await this.page
-      .locator(`[data-wizard-step="${stepNumber}"]:not(.ta-wizard-step--hidden)`)
-      .waitFor({ state: 'visible', timeout: 5000 })
-      .then(() => true)
-      .catch(() => false);
-    if (panelVisible) return;
-
-    const headingVisible = await this.page
-      .getByRole('heading', { name: headingPattern })
-      .waitFor({ state: 'visible', timeout: 8000 })
-      .then(() => true)
-      .catch(() => false);
-    if (headingVisible) return;
-
-    const validation = await this.collectValidationMessages();
-    throw new Error(
-      `Wizard did not reach step ${stepNumber} (${headingPattern}). ` +
-        `URL: ${this.page.url()}. Validation: ${validation || '(none)'}`,
-    );
+    const validation = await this.page
+      .locator('.field-validation-error:not(:empty), .validation-summary-errors li, span.text-danger:not(:empty)')
+      .allTextContents()
+      .then((t) => t.map((s) => s.trim()).filter(Boolean).slice(0, 8).join(' | '))
+      .catch(() => '');
+    throw new Error(`Wizard did not reach step ${stepNumber} (${heading}). URL: ${this.page.url()}. Validation: ${validation || '(none)'}`);
   }
 
-  /** Next from Project Details is gated by wizard JS (`tt()`): required fields + JurisdictionIdSelect.val(). */
+  private async headingVisible(heading: RegExp, timeout: number): Promise<boolean> {
+    return this.page.getByRole('heading', { name: heading }).waitFor({ state: 'visible', timeout }).then(() => true).catch(() => false);
+  }
+
+  /** Prefer Playwright Next; fall back to a raw DOM click (Mimik can leave the button inert). */
+  private async clickNext(): Promise<void> {
+    await closeSelect2Dropdown(this.page);
+    const next = this.page.getByRole('button', { name: 'Next', exact: true }).and(this.page.locator(':visible')).last();
+    await guideClick(this.page, next, { force: true, noWaitAfter: true });
+  }
+
+  /** Real mouse click so Mimik records the step (evaluate clicks are invisible to Mimik). */
+  private async clickDomNext(): Promise<void> {
+    const next = this.page.getByRole('button', { name: 'Next', exact: true }).and(this.page.locator(':visible')).last();
+    const box = await next.boundingBox().catch(() => null);
+    if (box) {
+      await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await waitForMimikCapture(this.page);
+      return;
+    }
+    await next.click({ force: true, noWaitAfter: true }).catch(() => {});
+    await waitForMimikCapture(this.page);
+  }
+
+  private async advanceByNext(nextHeading: RegExp, attempts = 3): Promise<void> {
+    for (let i = 0; i < attempts; i++) {
+      await this.clickNext();
+      if (await this.headingVisible(nextHeading, 10000)) return;
+      await this.clickDomNext();
+      if (await this.headingVisible(nextHeading, 10000)) return;
+    }
+  }
+
   private async advanceFromProjectDetails(): Promise<void> {
     for (let attempt = 0; attempt < 3; attempt++) {
-      // Ensure jurisdiction native value is set before Next — display text alone is not enough.
       if (!(await this.isJurisdictionSelected())) {
-        console.log('Jurisdiction native value missing before Next — opening dropdown to pick one.');
-        await this.pickRandomJurisdictionFromDropdown();
+        await this.selectJurisdictionViaLookup();
       }
-
       await this.clickNext();
-
-      const leftDetails = await this.page
-        .waitForFunction(() => {
-          const details = document.querySelector('[data-wizard-step="1"]');
-          const step2 = document.querySelector('[data-wizard-step="2"]');
-          const detailsHidden = !details || details.classList.contains('ta-wizard-step--hidden');
-          const step2Visible = !!step2 && !step2.classList.contains('ta-wizard-step--hidden');
-          const urlStep2 = /[?&]step=2(&|$)/.test(location.search);
-          return urlStep2 || (detailsHidden && step2Visible);
-        }, { timeout: 10000 })
-        .then(() => true)
-        .catch(() => false);
-      if (leftDetails) return;
-
-      // Mimik sometimes swallows the Playwright click — fire the visible wizard Next directly.
-      await this.page.evaluate(() => {
-        const btn = document.querySelector(
-          'button[data-wizard-nav="next-js"]:not(.d-none)',
-        ) as HTMLButtonElement | null;
-        btn?.click();
-      });
-      const leftAfterNative = await this.page
-        .waitForFunction(() => {
-          const details = document.querySelector('[data-wizard-step="1"]');
-          return !details || details.classList.contains('ta-wizard-step--hidden') || /[?&]step=2(&|$)/.test(location.search);
-        }, { timeout: 8000 })
-        .then(() => true)
-        .catch(() => false);
-      if (leftAfterNative) return;
-
-      const stillOnDetails = await this.page
-        .locator('[data-wizard-step="1"]:not(.ta-wizard-step--hidden)')
-        .isVisible({ timeout: 1000 })
-        .catch(() => false);
-      if (!stillOnDetails) return;
-
-      const snapshot = await this.projectDetailsFieldSnapshot();
-      console.log(
-        `Project Details did not advance (attempt ${attempt + 1}/3). Fields: ${snapshot}. Re-picking jurisdiction…`,
-      );
-      await this.pickRandomJurisdictionFromDropdown();
-      await this.page.waitForTimeout(500);
+      if (await this.headingVisible(/Building Characteristics/i, 12000)) return;
+      if (await this.isJurisdictionSelected()) {
+        await this.clickDomNext();
+        if (await this.headingVisible(/Building Characteristics/i, 12000)) return;
+      }
+      console.log(`Project Details did not advance (attempt ${attempt + 1}/3). Re-picking jurisdiction…`);
+      await this.selectJurisdictionViaLookup();
     }
-
-    const snapshot = await this.projectDetailsFieldSnapshot();
-    throw new Error(
-      `Could not leave Project Details after 3 Next attempts. ` +
-        `URL: ${this.page.url()}. Fields: ${snapshot}`,
-    );
+    throw new Error(`Could not leave Project Details after 3 Next attempts. URL: ${this.page.url()}`);
   }
 
-  private async projectDetailsFieldSnapshot(): Promise<string> {
-    return this.page
-      .evaluate(() => {
-        const val = (sel: string) => {
-          const el = document.querySelector(sel) as HTMLInputElement | HTMLSelectElement | null;
-          return (el?.value || '').trim() || '(empty)';
-        };
-        return [
-          `name=${val('#PermitProject_ProjectName')}`,
-          `street=${val('#PermitProject_StreetAddressLine1')}`,
-          `city=${val('#PermitProject_CityOrMunicipality')}`,
-          `state=${val('#PermitProject_StateOrProvince')}`,
-          `postal=${val('#PermitProject_PostalCode')}`,
-          `jurisdiction=${val('#JurisdictionIdSelect')}`,
-        ].join(' | ');
-      })
-      .catch(() => '(snapshot failed)');
-  }
-
-  private async collectValidationMessages(): Promise<string> {
-    return this.page
-      .evaluate(() => {
-        const nodes = Array.from(
-          document.querySelectorAll(
-            '.field-validation-error:not(:empty), .validation-summary-errors li, span.text-danger:not(:empty)',
-          ),
-        );
-        return nodes
-          .map((n) => (n.textContent || '').trim())
-          .filter((t) => t && t.length < 120)
-          .slice(0, 12)
-          .join(' | ');
-      })
-      .catch(() => '');
-  }
-
-  /** Step-2 Next is type=submit — full post that must return projectId before step 3. */
   private async advanceFromBuildingCharacteristics(): Promise<void> {
     const tenant = process.env.TENANT_NAME || '';
-
     for (let attempt = 0; attempt < 3; attempt++) {
       if (tenant) {
         await this.page.evaluate((t) => {
@@ -200,76 +146,38 @@ export class CreateProjectPage {
         }, tenant);
       }
 
-      // Re-assert jurisdiction — step-2 submit re-runs the same required-field gate.
-      if (!(await this.isJurisdictionSelected())) {
-        await this.pickRandomJurisdictionFromDropdown();
-      }
-
-      const snapshot = await this.page.evaluate(() => {
-        const v = (sel: string) =>
-          String((document.querySelector(sel) as HTMLInputElement | HTMLSelectElement | null)?.value || '').trim();
-        return {
-          jurisdiction: v('#JurisdictionIdSelect'),
-          name: v('#PermitProject_ProjectName'),
-          gross: v('#PermitProject_GrossSquareFootage'),
-          height: v('#PermitProject_Height'),
-          floors: v('#PermitProject_NumberOfFloors'),
-          occupancy: v('#PermitProject_OccupancyType'),
-          construction: v('#PermitProject_ConstructionType'),
-          sprinkler: v('#PermitProject_SprinklerCoverage'),
-        };
-      });
-      console.log(`Step-2 submit attempt ${attempt + 1}/3 fields:`, snapshot);
-
-      const navigated = this.page
-        .waitForURL(/projectId=|[?&]step=3(&|$)/i, { timeout: 45000 })
-        .then(() => true)
-        .catch(() => false);
-
+      // Fill empty step-2 Select2s — never touch JurisdictionIdSelect (GUID-only).
       await this.page.evaluate(() => {
-        const form = document.querySelector('#PermitProjectCreateForm') as HTMLFormElement | null;
-        const btn = document.querySelector(
-          'button[type="submit"][data-wizard-action="step-2"]:not(.d-none)',
-        ) as HTMLButtonElement | null;
-        if (form && btn) {
-          form.requestSubmit(btn);
-          return;
-        }
-        btn?.click();
+        const $ = (window as unknown as { jQuery?: (el: Element) => any }).jQuery;
+        document.querySelectorAll('select.select2-hidden-accessible').forEach((node) => {
+          const sel = node as HTMLSelectElement;
+          if (sel.id === 'JurisdictionIdSelect' || sel.value || sel.options.length < 2) return;
+          const opt = Array.from(sel.options).find((o) => o.value && !/select|choose/i.test(o.text));
+          if (!opt) return;
+          sel.value = opt.value;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          $?.(sel).val(opt.value).trigger('change');
+        });
       });
 
+      console.log(`Step-2 submit attempt ${attempt + 1}/3`);
+      const navigated = this.page.waitForURL(/projectId=|[?&]step=3(&|$)/i, { timeout: 45000 }).then(() => true).catch(() => false);
+      const submitNext = this.page
+        .locator('button[type="submit"][data-wizard-action="step-2"]:not(.d-none)')
+        .or(this.page.getByRole('button', { name: 'Next', exact: true }).and(this.page.locator(':visible')).last())
+        .first();
+      await guideClick(this.page, submitNext, { force: true, noWaitAfter: true });
       if (await navigated) return;
 
+      await this.clickDomNext();
+      if (await this.page.waitForURL(/projectId=|[?&]step=3(&|$)/i, { timeout: 15000 }).then(() => true).catch(() => false)) {
+        return;
+      }
       console.log(`Building Characteristics submit did not advance (attempt ${attempt + 1}/3). URL: ${this.page.url()}`);
-      // Re-enable buttons if the wizard left them in a busy/disabled state.
-      await this.page.evaluate(() => {
-        document.querySelectorAll('button[disabled]').forEach((b) => b.removeAttribute('disabled'));
-      });
-      await this.page.waitForTimeout(1000);
     }
-
-    await this.waitForProjectEnvelopeSaved(10000);
-  }
-
-  private async waitForProjectEnvelopeSaved(timeout = 30000): Promise<void> {
-    await this.page.waitForURL(/projectId=/i, { timeout }).catch(() => {
+    await this.page.waitForURL(/projectId=/i, { timeout: 10000 }).catch(() => {
       console.log('Project envelope URL not updated with projectId — continuing.');
     });
-    await this.page.waitForTimeout(500);
-  }
-
-  private async clickNext(): Promise<void> {
-    await closeSelect2Dropdown(this.page);
-    // Step 1/3 use data-wizard-nav="next-js"; step 2 uses type=submit — match any visible Next.
-    const next = this.page
-      .getByRole('button', { name: 'Next', exact: true })
-      .and(this.page.locator(':visible'))
-      .last();
-    await next.waitFor({ state: 'visible', timeout: 15000 });
-    await next.scrollIntoViewIfNeeded();
-    await this.page.waitForTimeout(300);
-    await guideClick(this.page, next, { force: true });
-    await this.page.waitForTimeout(1500);
   }
 
   private captureProjectIdFromUrl(): void {
@@ -280,37 +188,33 @@ export class CreateProjectPage {
     }
   }
 
-  getCreatedProjectId(): string {
-    return this.createdProjectId;
-  }
-
   private async clickCreateProject(): Promise<void> {
     this.captureProjectIdFromUrl();
     const projectId = this.createdProjectId;
     const tenant = process.env.TENANT_NAME || '';
 
+    await closeSelect2Dropdown(this.page);
+    const overlay = this.page.locator('#AddContactPanel.show, .offcanvas.show, .modal.show').first();
+    if (await overlay.isVisible().catch(() => false)) {
+      const closeBtn = overlay.getByRole('button', { name: /Cancel|Close/i }).first();
+      if (await closeBtn.isVisible().catch(() => false)) {
+        await guideClick(this.page, closeBtn, { force: true }).catch(() => {});
+      }
+      await overlay.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+    }
+
     const createBtn = this.page.getByRole('button', { name: /Create project/i });
     await createBtn.waitFor({ state: 'visible', timeout: 15000 });
-    await createBtn.scrollIntoViewIfNeeded();
-    await guideClick(this.page, createBtn);
+    await guideClick(this.page, createBtn, { force: true, noWaitAfter: true });
+    await this.page.waitForURL((url) => /services\/Apply|PermitProjects/i.test(url.href), { timeout: 60000 });
 
-    await this.page.waitForURL(
-      (url) => /services\/Apply|PermitProjects/i.test(url.href),
-      { timeout: 60000 },
-    );
-
-    // Server returnUrl sometimes omits projectId — put it back so Apply binds the project.
     if (projectId && /services\/Apply/i.test(this.page.url()) && !/projectId=/i.test(this.page.url())) {
       const next = new URL(this.page.url());
       next.searchParams.set('projectId', projectId);
-      if (tenant && !next.searchParams.has('__tenant')) {
-        next.searchParams.set('__tenant', tenant);
-      }
+      if (tenant && !next.searchParams.has('__tenant')) next.searchParams.set('__tenant', tenant);
       console.log(`Apply URL missing projectId — navigating with projectId=${projectId}`);
-      await this.page.goto(next.href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await this.page.goto(next.href, { waitUntil: 'domcontentloaded' });
     }
-
-    await this.page.waitForTimeout(1000);
   }
 
   private async fillProjectDetailsStep(data: DynamicProjectData): Promise<void> {
@@ -325,9 +229,7 @@ export class CreateProjectPage {
     if (await parcelInput.isVisible({ timeout: 500 }).catch(() => false)) {
       await guideType(this.page, parcelInput, faker.string.numeric(10));
     }
-
-    await this.selectJurisdiction(data);
-    await this.page.waitForTimeout(400);
+    await this.ensureJurisdiction(data);
   }
 
   private async fillBuildingCharacteristicsStep(data: DynamicProjectData): Promise<void> {
@@ -346,33 +248,27 @@ export class CreateProjectPage {
     }
   }
 
-  private async selectJurisdiction(data: DynamicProjectData): Promise<void> {
+  private async ensureJurisdiction(data: DynamicProjectData): Promise<void> {
     await this.page.locator('#JurisdictionIdSelect').waitFor({ state: 'attached', timeout: 15000 }).catch(() => {});
-
     if (await this.isJurisdictionSelected()) {
       data.jurisdiction = (await this.jurisdictionDisplayText()) || data.jurisdiction;
       return;
     }
-
-    const picked = await this.pickRandomJurisdictionFromDropdown();
-    if (!picked) {
-      throw new Error('Failed to select a jurisdiction — dropdown never showed selectable options.');
-    }
+    const picked = await this.selectJurisdictionViaLookup();
+    if (!picked) throw new Error('Failed to select a jurisdiction.');
     data.jurisdiction = picked;
   }
 
   private async isJurisdictionSelected(): Promise<boolean> {
-    const nativeValue = await this.page.locator('#JurisdictionIdSelect').inputValue().catch(() => '');
-    return Boolean(nativeValue?.trim());
+    const value = (await this.page.locator('#JurisdictionIdSelect').inputValue().catch(() => '')).trim();
+    return GUID.test(value);
   }
 
   private async jurisdictionDisplayText(): Promise<string> {
-    const fromCombobox = (await this.jurisdictionCombobox.innerText().catch(() => '') ?? '')
+    const text = ((await this.jurisdictionCombobox.innerText().catch(() => '')) ?? '')
       .replace(/^[×x]\s*/i, '')
       .trim();
-    if (fromCombobox && !/search jurisdiction|select|choose/i.test(fromCombobox)) {
-      return fromCombobox;
-    }
+    if (text && !/search jurisdiction|select|choose/i.test(text)) return text;
     return this.page
       .locator('#select2-JurisdictionIdSelect-container')
       .innerText()
@@ -381,18 +277,42 @@ export class CreateProjectPage {
   }
 
   /**
-   * Pick a random jurisdiction via the same AJAX lookup the dropdown uses,
-   * then set the native <select> value (required by the wizard Next/submit gates).
-   */
-  private async pickRandomJurisdictionFromDropdown(): Promise<string | null> {
+  private async selectJurisdictionViaLookup(): Promise<string | null> {
+    await closeSelect2Dropdown(this.page);
+    await this.jurisdictionCombobox.scrollIntoViewIfNeeded().catch(() => {});
+
+    if (await this.jurisdictionCombobox.isVisible().catch(() => false)) {
+      await guideClick(this.page, this.jurisdictionCombobox);
+      if (!(await this.page.locator('input.select2-search__field:visible').isVisible({ timeout: 1500 }).catch(() => false))) {
+        await this.page.evaluate(() => {
+          const $ = (window as unknown as { jQuery?: (s: string) => { select2: (c: string) => void } }).jQuery;
+          $?.('#JurisdictionIdSelect')?.select2('open');
+        });
+      }
+      const search = this.page.locator('input.select2-search__field:visible');
+      if (await search.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await search.fill('');
+        await search.pressSequentially('Colorado', { delay: 40 });
+        await waitForMimikCapture(this.page);
+      }
+      // Real result click → Mimik records the selection AND Select2 sets the GUID.
+      await clickSelect2Option(this.page, /colorado|\bco\b/i, 10000);
+      await closeSelect2Dropdown(this.page);
+      if (await this.isJurisdictionSelected()) {
+        const label = (await this.jurisdictionDisplayText()) || 'Colorado';
+        console.log(`Jurisdiction selected via dropdown: ${label}`);
+        return label;
+      }
+    }
+
     const picked = await this.page.evaluate(async () => {
+      const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const select = document.querySelector('#JurisdictionIdSelect') as HTMLSelectElement | null;
       if (!select) return null;
 
       const lookup = new URL(location.href);
       lookup.searchParams.set('handler', 'JurisdictionLookup');
-      lookup.searchParams.set('term', 'a');
-
+      lookup.searchParams.set('term', 'Colorado');
       const resp = await fetch(lookup.href, {
         headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' },
         credentials: 'same-origin',
@@ -400,98 +320,90 @@ export class CreateProjectPage {
       if (!resp.ok) return null;
 
       const payload = (await resp.json()) as { results?: Array<{ id: string; text: string }> };
-      const results = payload.results?.filter((r) => r?.id) ?? [];
-      if (results.length === 0) return null;
+      const results = (payload.results ?? []).filter((r) => r?.id && guid.test(String(r.id)));
+      if (!results.length) return null;
 
-      const item = results[Math.floor(Math.random() * results.length)];
+      const item =
+        results.find((r) => /colorado/i.test(r.text || '')) ??
+        results.find((r) => /\bco\b/i.test(r.text || '')) ??
+        results[0];
+
       select.innerHTML = '';
       select.appendChild(new Option(item.text || item.id, item.id, true, true));
-
-      const w = window as unknown as {
-        jQuery?: (e: Element) => {
-          val: (v: string) => { trigger: (ev: string | object) => void };
-          trigger: (ev: object) => void;
-        };
-      };
-      if (w.jQuery) {
-        w.jQuery(select).val(item.id).trigger('change');
-        w.jQuery(select).trigger({
-          type: 'select2:select',
-          params: { data: { id: item.id, text: item.text || item.id } },
-        });
+      const $ = (window as unknown as { jQuery?: (e: Element) => any }).jQuery;
+      if ($) {
+        $(select).val(item.id).trigger('change');
+        $(select).trigger({ type: 'select2:select', params: { data: { id: item.id, text: item.text || item.id } } });
       } else {
         select.dispatchEvent(new Event('change', { bubbles: true }));
       }
+      const label = document.querySelector('#select2-JurisdictionIdSelect-container');
+      if (label) label.textContent = item.text || item.id;
       return item.text || item.id;
     }).catch(() => null);
 
-    if (!picked) return null;
-
-    const valueSet = await this.page
-      .waitForFunction(() => {
-        const el = document.querySelector('#JurisdictionIdSelect') as HTMLSelectElement | null;
-        return Boolean(el?.value?.trim());
-      }, { timeout: 8000 })
-      .then(() => true)
-      .catch(() => false);
-
-    if (!valueSet) return null;
-    console.log(`Jurisdiction selected at random: ${picked}`);
+    if (!picked || !(await this.isJurisdictionSelected())) return null;
+    console.log(`Jurisdiction bound via lookup: ${picked}`);
     return picked;
   }
 
   private async selectLabeledCombobox(labelPattern: RegExp, preferredValue?: string): Promise<void> {
     const combobox = this.page.getByRole('combobox', { name: labelPattern }).first();
-    if (!await combobox.isVisible({ timeout: 2000 }).catch(() => false)) return;
+    if (!(await combobox.isVisible({ timeout: 2000 }).catch(() => false))) return;
 
-    const currentText = (await combobox.innerText().catch(() => '') ?? '').trim();
-    if (currentText && !/select|choose/i.test(currentText)) return;
+    const currentText = ((await combobox.innerText().catch(() => '')) ?? '').trim();
+    if (currentText && !/select|choose|search/i.test(currentText)) return;
 
     await guideClick(this.page, combobox);
-    const preferred = preferredValue ? new RegExp(preferredValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : undefined;
+    if (!(await this.page.locator('.select2-container--open').isVisible({ timeout: 2000 }).catch(() => false))) {
+      await combobox.evaluate((el) => (el as HTMLElement).click()).catch(() => {});
+    }
+    const preferred = preferredValue
+      ? new RegExp(preferredValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+      : undefined;
     await clickSelect2Option(this.page, preferred, 10000);
     await closeSelect2Dropdown(this.page);
   }
 
-  private async advanceFromProjectContacts(): Promise<void> {
-    // Close any leftover offcanvas so it doesn't block Next.
-    await this.page.keyboard.press('Escape').catch(() => {});
-    await closeSelect2Dropdown(this.page);
-    await this.page.waitForTimeout(400);
-
-    for (let attempt = 0; attempt < 3; attempt++) {
-      await this.clickNext();
-
-      const advanced = await this.page
-        .waitForURL(/[?&]step=4(&|$)/i, { timeout: 10000 })
-        .then(() => true)
-        .catch(() => false);
-      if (advanced) return;
-
-      const step4Visible = await this.page
-        .locator('[data-wizard-step="4"]:not(.ta-wizard-step--hidden)')
-        .isVisible({ timeout: 2000 })
-        .catch(() => false);
-      if (step4Visible) return;
-
-      await this.page.evaluate(() => {
-        const btn = document.querySelector(
-          'button[data-wizard-nav="next-js"][data-wizard-action="step-3"]:not(.d-none)',
-        ) as HTMLButtonElement | null;
-        btn?.click();
-      });
-      await this.page.waitForTimeout(1500);
-
-      if (/[?&]step=4(&|$)/i.test(this.page.url())) return;
-    }
-  }
-
-  /** Role * is required on Add contact — `#AddContact_Role` is a LeptonX-synced form-select (often hidden). */
+  /**
+   * Role is required. Prefer a real UI click (Mimik-visible); fall back to setting
+   * the often-hidden `#AddContact_Role` select in the DOM.
+   */
   private async selectContactRole(contactPanel: Locator): Promise<void> {
-    const preferredText = /owner|applicant|architect|engineer|contractor/i;
+    const preferred = /owner|applicant|architect|engineer|contractor/i;
 
-    // Fast path: set the native select value in-DOM (visible UI is often a LeptonX wrapper).
-    const picked = await this.page.evaluate(({ preferred }) => {
+    const roleSelect = contactPanel.locator('#AddContact_Role, select[name="Input.Role"], select[name*="Role"]').first();
+    const roleTrigger = contactPanel
+      .locator('#AddContact_Role:visible')
+      .or(contactPanel.getByText(/^Select Role$/i))
+      .or(contactPanel.getByRole('combobox', { name: /Role/i }))
+      .and(contactPanel.locator(':visible'))
+      .first();
+
+    if (await roleTrigger.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await guideClick(this.page, roleTrigger);
+      const option = this.page
+        .locator('[role="option"]:visible, .dropdown-item:visible, .select2-results__option:visible')
+        .filter({ hasNotText: /select role|loading/i })
+        .filter({ hasText: preferred })
+        .first();
+      if (await option.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await guideClick(this.page, option);
+        await closeSelect2Dropdown(this.page);
+      } else if (await roleSelect.count()) {
+        const labels = await roleSelect.locator('option').allTextContents().catch(() => [] as string[]);
+        const label =
+          labels.find((t) => preferred.test(t.trim()) && !/select/i.test(t)) ??
+          labels.find((t) => t.trim() && !/select/i.test(t));
+        if (label) await roleSelect.selectOption({ label: label.trim() }).catch(() => {});
+      }
+      if (await this.contactRoleValue()) {
+        console.log(`Contact Role selected (UI): ${await this.contactRoleValue()}`);
+        return;
+      }
+    }
+
+    const picked = await this.page.evaluate((preferredSource) => {
       const el = document.querySelector(
         '#AddContact_Role, select[name="Input.Role"], select[name*="Role"]',
       ) as HTMLSelectElement | null;
@@ -502,174 +414,106 @@ export class CreateProjectPage {
         .filter((o) => o.value && !/select/i.test(o.text));
       if (!options.length) return null;
 
-      const preferredRe = new RegExp(preferred, 'i');
-      const choice = options.find((o) => preferredRe.test(o.text)) ?? options[0];
+      const re = new RegExp(preferredSource, 'i');
+      const choice = options.find((o) => re.test(o.text)) ?? options[0];
       el.value = choice.value;
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-
-      // Fire inline onchange (ProjectOwnerHint toggle) if present.
       if (typeof el.onchange === 'function') {
         el.onchange(new Event('change') as unknown as Event);
       }
-
-      const $ = (window as unknown as { jQuery?: (sel: Element) => { trigger: (e: string) => void } }).jQuery;
-      if ($) $(el).trigger('change');
-
+      const $ = (window as unknown as { jQuery?: (s: Element) => { trigger: (e: string) => void } }).jQuery;
+      $?.(el).trigger('change');
       return choice;
-    }, { preferred: preferredText.source });
+    }, preferred.source);
 
-    if (picked) {
-      // Sync any visible LeptonX / custom label text if present.
-      await contactPanel
-        .locator('.form-select, [role="combobox"], .lpx-select')
-        .filter({ hasText: /Select Role|Role/i })
-        .first()
-        .evaluate((node, text) => {
-          if (node instanceof HTMLElement && /select role/i.test(node.innerText || '')) {
-            node.innerText = text;
-          }
-        }, picked.text)
-        .catch(() => {});
+    if (!picked) throw new Error('Could not select mandatory Contact Role on Add contact panel.');
+    await waitForMimikCapture(this.page);
+    console.log(`Contact Role selected: ${picked.text} (value=${picked.value})`);
+  }
 
-      console.log(`Contact Role selected: ${picked.text} (value=${picked.value})`);
-      return;
-    }
-
-    // Visible UI fallback (select2 / custom dropdown).
-    const roleCombobox = contactPanel
-      .getByRole('combobox', { name: /Role|Select Role/i })
-      .or(contactPanel.getByText(/^Select Role$/i))
-      .first();
-
-    if (await roleCombobox.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await guideClick(this.page, roleCombobox);
-      const option = this.page
-        .locator('[role="option"]:visible, .dropdown-item:visible, .select2-results__option:visible')
-        .filter({ hasNotText: /select|loading/i })
-        .first();
-      if (await option.isVisible({ timeout: 5000 }).catch(() => false)) {
-        const label = (await option.innerText().catch(() => '') ?? '').trim();
-        await guideClick(this.page, option);
-        console.log(`Contact Role selected (menu): ${label}`);
-        return;
-      }
-      await clickSelect2Option(this.page, preferredText, 8000).catch(() => false);
-      await closeSelect2Dropdown(this.page);
-      return;
-    }
-
-    throw new Error('Could not select mandatory Contact Role on Add contact panel.');
+  private async contactRoleValue(): Promise<string> {
+    return this.page.evaluate(() => {
+      const el = document.querySelector(
+        '#AddContact_Role, select[name="Input.Role"], select[name*="Role"]',
+      ) as HTMLSelectElement | null;
+      return (el?.value || '').trim();
+    });
   }
 
   private async addProjectContact(): Promise<void> {
     if (this.contactAdded) return;
 
-    // Prefer the visible "+ Add contact" control — #AddContactButton may be hidden/stale.
     const addContact = this.page
       .getByRole('button', { name: /Add contact/i })
       .or(this.page.getByRole('link', { name: /Add contact/i }))
       .or(this.page.locator('#AddContactButton'))
       .and(this.page.locator(':visible'))
       .first();
+    if (!(await addContact.isVisible({ timeout: 5000 }).catch(() => false))) return;
 
-    if (!await addContact.isVisible({ timeout: 5000 }).catch(() => false)) return;
-
-    const alreadyAttached = await this.page.getByText(/[1-9]\d* attached/i).isVisible({ timeout: 1000 }).catch(() => false);
-    if (alreadyAttached) {
+    if (await this.page.getByText(/[1-9]\d* attached/i).isVisible({ timeout: 1000 }).catch(() => false)) {
       this.contactAdded = true;
       return;
     }
 
-    // Panel may be offcanvas or modal; wait for Role UI rather than a single id.
-    const panelReady = () =>
-      this.page
-        .locator('#AddContactPanel.show, .offcanvas.show, .modal.show')
-        .filter({ hasText: /Add contact|Select Role|Role/i })
-        .or(this.page.getByRole('heading', { name: /Add contact to project/i }))
-        .or(this.page.getByText(/^Select Role$/i))
-        .first();
+    const panelReady = this.page
+      .locator('#AddContactPanel.show, .offcanvas.show, .modal.show')
+      .filter({ hasText: /Add contact|Select Role|Role/i })
+      .or(this.page.getByRole('heading', { name: /Add contact to project/i }))
+      .first();
 
-    try {
-      let opened = false;
-      for (let openAttempt = 0; openAttempt < 3; openAttempt++) {
-        await addContact.scrollIntoViewIfNeeded();
-        await guideClick(this.page, addContact);
-
-        opened = await panelReady()
-          .waitFor({ state: 'visible', timeout: 8000 })
-          .then(() => true)
-          .catch(() => false);
-        if (opened) break;
-
-        await addContact.evaluate((el) => (el as HTMLElement).click()).catch(() => {});
-        opened = await panelReady()
-          .waitFor({ state: 'visible', timeout: 5000 })
-          .then(() => true)
-          .catch(() => false);
-        if (opened) break;
-      }
-
+    let opened = false;
+    for (let i = 0; i < 3 && !opened; i++) {
+      await addContact.scrollIntoViewIfNeeded();
+      await guideClick(this.page, addContact);
+      opened = await panelReady.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false);
       if (!opened) {
-        console.log('Add contact panel did not open — continuing without contact.');
-        return;
+        await addContact.evaluate((el) => (el as HTMLElement).click()).catch(() => {});
+        opened = await panelReady.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
       }
-
-      const contactPanel = this.page
-        .locator('#AddContactPanel.show, #AddContactPanel, .offcanvas.show, .modal.show')
-        .filter({ hasText: /Add contact|Select Role/i })
-        .last();
-
-      await this.selectContactRole(contactPanel);
-
-      const fullName = contactPanel.locator('#Input_FullName, input[name*="FullName" i]').first();
-      if (await fullName.isVisible({ timeout: 2000 }).catch(() => false)) {
-        if (await fullName.isEditable().catch(() => true)) {
-          await guideType(this.page, fullName, faker.person.fullName());
-        }
-      }
-
-      for (const [sel, value] of [
-        ['#Input_Organisation, input[name*="Organisation" i], input[name*="Organization" i]', faker.company.name()],
-        ['#Input_Email, input[name*="Email" i]', faker.internet.email()],
-        ['#Input_Phone, input[name*="Phone" i]', faker.string.numeric(10)],
-      ] as const) {
-        const field = contactPanel.locator(sel).first();
-        if (await field.isEditable().catch(() => false)) {
-          await guideType(this.page, field, value);
-        }
-      }
-
-      const saveContactButton = contactPanel
-        .getByRole('button', { name: /^Add contact$/i })
-        .or(contactPanel.locator('button.btn-primary').filter({ hasText: /Add contact/i }))
-        .last();
-      await guideClick(this.page, saveContactButton);
-
-      const stillOpen = await contactPanel.isVisible({ timeout: 2000 }).catch(() => false);
-      if (stillOpen) {
-        const roleStillEmpty = await contactPanel.getByText(/^Select Role$/i).isVisible().catch(() => false);
-        if (roleStillEmpty) {
-          throw new Error('Add contact failed: Role is still "Select Role" after save attempt.');
-        }
-        await this.page.keyboard.press('Escape').catch(() => {});
-      }
-
-      await contactPanel.waitFor({ state: 'hidden', timeout: 15000 }).catch(async () => {
-        await this.page.keyboard.press('Escape').catch(() => {});
-      });
-      await this.page.keyboard.press('Escape').catch(() => {});
-
-      this.contactAdded = true;
-      console.log('Project contact added.');
-    } catch (err) {
-      await this.page.keyboard.press('Escape').catch(() => {});
-      throw err;
     }
-  }
+    if (!opened) {
+      console.log('Add contact panel did not open — continuing without contact.');
+      return;
+    }
 
+    const contactPanel = this.page
+      .locator('#AddContactPanel.show, #AddContactPanel, .offcanvas.show, .modal.show')
+      .filter({ hasText: /Add contact|Select Role/i })
+      .last();
 
-  getRawPage(): Page {
-    return this.page;
+    await this.selectContactRole(contactPanel);
+
+    const fullName = contactPanel.locator('#Input_FullName, input[name*="FullName" i]').first();
+    if (await fullName.isEditable().catch(() => false)) {
+      await guideType(this.page, fullName, faker.person.fullName());
+    }
+    for (const [sel, value] of [
+      ['#Input_Organisation, input[name*="Organisation" i], input[name*="Organization" i]', faker.company.name()],
+      ['#Input_Email, input[name*="Email" i]', faker.internet.email()],
+      ['#Input_Phone, input[name*="Phone" i]', faker.string.numeric(10)],
+    ] as const) {
+      const field = contactPanel.locator(sel).first();
+      if (await field.isEditable().catch(() => false)) await guideType(this.page, field, value);
+    }
+
+    if (!(await this.contactRoleValue())) await this.selectContactRole(contactPanel);
+
+    await guideClick(
+      this.page,
+      contactPanel.getByRole('button', { name: /^Add contact$/i }).or(contactPanel.locator('button.btn-primary').filter({ hasText: /Add contact/i })).last(),
+    );
+
+    if (await contactPanel.isVisible({ timeout: 2000 }).catch(() => false)) {
+      if (await contactPanel.getByText(/^Select Role$/i).isVisible().catch(() => false)) {
+        throw new Error('Add contact failed: Role is still "Select Role" after save attempt.');
+      }
+      const closeBtn = contactPanel.getByRole('button', { name: /Cancel|Close/i }).first();
+      if (await closeBtn.isVisible().catch(() => false)) await guideClick(this.page, closeBtn).catch(() => {});
+    }
+    await contactPanel.waitFor({ state: 'hidden', timeout: 15000 }).catch(() => {});
+    this.contactAdded = true;
+    console.log('Project contact added.');
   }
 }

@@ -1,4 +1,4 @@
-import { Page, Locator, expect } from '@playwright/test';
+import { Page, Locator } from '@playwright/test';
 import { BasePage } from './base.page';
 import { guideClick, guideType } from '../utils/mimik-action.helper';
 import { isMimikGuideMode } from '../utils/mimik.helper';
@@ -12,27 +12,19 @@ export class AuthLoginPage extends BasePage {
   private readonly loginButton: Locator;
 
   constructor(page: Page) {
-    super(page, (process.env.AUTH_BASE_URL || ''));
-    
-    this.switchLink = page.getByRole('link', { name: 'switch' });
-    this.tenantNameInput = page.getByRole('textbox', { name: 'Name', exact: true });
-    this.usernameInput = page.getByRole('textbox', { name: 'Username', exact: true });
-    this.passwordInput = page.getByRole('textbox', { name: 'Password', exact: true });
-    this.rememberMeText = page.getByText('Remember me');
-    this.loginButton = page.getByRole('button', { name: 'Login' });
+    super(page, process.env.AUTH_BASE_URL || '');
+    this.switchLink = page.getByRole('link', { name: /switch/i }).or(page.getByRole('button', { name: /switch/i }));
+    this.tenantNameInput = page.getByRole('textbox', { name: /^Name$/i });
+    this.usernameInput = page.getByRole('textbox', { name: /Username/i });
+    this.passwordInput = page.getByRole('textbox', { name: /Password/i });
+    this.rememberMeText = page.getByText(/Remember me/i);
+    this.loginButton = page.getByRole('button', { name: /Login/i });
   }
 
   async switchTenant(tenantName: string): Promise<void> {
-    // 1. Click the switch link
-    await this.switchLink.click();
-    
-    // 2. CRITICAL FIX: Wait for the modal dialog container to appear first
-    // This ensures the modal animation/rendering has started
-    await this.page.waitForSelector('[role="dialog"]', { state: 'visible', timeout: 10000 })
-      .catch(() => console.log('Dialog role not found, waiting directly for input...'));
-    
-    // 3. NOW wait specifically for the Name textbox inside the modal to be visible
-    await this.tenantNameInput.waitFor({ state: 'visible', timeout: 15000 });
+    await guideClick(this.page, this.switchLink);
+    await this.page.waitForSelector('[role="dialog"]', { state: 'visible' }).catch(() => {});
+    await this.tenantNameInput.waitFor({ state: 'visible' });
 
     if (isMimikGuideMode()) {
       await guideType(this.page, this.tenantNameInput, tenantName);
@@ -41,27 +33,16 @@ export class AuthLoginPage extends BasePage {
       await this.tenantNameInput.fill(tenantName);
     }
 
-    const saveButton = this.page.getByRole('button', { name: 'Save' });
-    await guideClick(this.page, saveButton);
-    
-    // 6. Wait for "Saving..." text to disappear from the DOM
-    await this.page.waitForFunction(
-      () => !document.body.textContent?.includes('Saving...'),
-      { timeout: 15000 }
-    ).catch(() => {
-      console.log('Warning: Saving timeout - continuing anyway');
-    });
-    
-    // 7. Wait for modal to fully close and UI to settle
-    await this.page.waitForTimeout(500);
+    await guideClick(this.page, this.page.getByRole('button', { name: /Save/i }));
+    await this.page
+      .waitForFunction(() => !document.body.textContent?.includes('Saving...'))
+      .catch(() => {});
   }
 
   async login(username: string, password: string): Promise<void> {
-    // Wait for login form to be ready
-    await this.usernameInput.waitFor({ state: 'visible', timeout: 10000 });
-    await this.passwordInput.waitFor({ state: 'visible', timeout: 5000 });
-    
-    // Clear and fill directly to control timeouts
+    await this.usernameInput.waitFor({ state: 'visible' });
+    await this.passwordInput.waitFor({ state: 'visible' });
+
     if (isMimikGuideMode()) {
       await guideType(this.page, this.usernameInput, username);
       await guideType(this.page, this.passwordInput, password);
@@ -72,36 +53,32 @@ export class AuthLoginPage extends BasePage {
       await this.passwordInput.fill(password);
     }
 
-    if (await this.rememberMeText.isVisible().catch(() => false)) {
+    // Skip Remember me in guide mode — label click + checkbox toggle become two Mimik steps.
+    if (!isMimikGuideMode() && (await this.rememberMeText.isVisible().catch(() => false))) {
       await guideClick(this.page, this.rememberMeText);
     }
 
-    await Promise.all([
-      this.page.waitForURL(/storefront/i, { timeout: 90000 }),
-      guideClick(this.page, this.loginButton),
-    ]);
+    // Click first, then wait until we leave auth — do not match "storefront" inside ReturnUrl.
+    await guideClick(this.page, this.loginButton);
+    await this.page.waitForURL(
+      (url) => /storefront/i.test(url.hostname),
+      { waitUntil: 'domcontentloaded' },
+    );
   }
 
-  async completeLoginFlow(
-    tenantName: string,
-    username: string,
-    password: string
-  ): Promise<void> {
+  async completeLoginFlow(tenantName: string, username: string, password: string): Promise<void> {
     await this.page.waitForLoadState('domcontentloaded');
-    await this.usernameInput.waitFor({ state: 'visible', timeout: 30000 });
+    await this.usernameInput.waitFor({ state: 'visible' });
 
-    // Check if the tenant is already set to the target tenant to avoid redundant modals and timeouts
-    const tenantLabel = this.page.locator('strong');
-    const currentTenant = await tenantLabel.first().textContent().catch(() => '');
-    
+    const currentTenant = await this.page.locator('strong').first().textContent().catch(() => '');
     if (currentTenant?.trim().toLowerCase() !== tenantName.toLowerCase()) {
-      if (await this.switchLink.isVisible({ timeout: 3000 }).catch(() => false)) {
+      if (await this.switchLink.isVisible().catch(() => false)) {
         await this.switchTenant(tenantName);
       }
     } else {
-      console.log(`✅ Tenant is already set to "${tenantName}". Skipping switch.`);
+      console.log(`Tenant already set to "${tenantName}".`);
     }
-    
+
     await this.login(username, password);
   }
 }

@@ -3,7 +3,8 @@ import { defineBddConfig } from 'playwright-bdd';
 import * as dotenv from 'dotenv';
 import path from 'path';
 
-dotenv.config({ path: path.resolve(__dirname, '.env') });
+// Local .env must win over stale shell/CI leftovers (e.g. an old MIMIK_CAPTURE_DELAY_MS).
+dotenv.config({ path: path.resolve(__dirname, '.env'), override: true });
 
 const testDir = defineBddConfig({
   features: 'features/**/*.feature',
@@ -71,17 +72,15 @@ export default defineConfig({
     },
 
     {
-      // Run only via: npm run test:guide  (or --project=guide-mimik)
-      // Excluded from default npm test / test:bdd / test:smoke scripts.
       name: 'guide-mimik',
-      // Mimik capture adds per-click delay; allow longer waits than smoke.
-      timeout: 600000,
+      // Slower Mimik capture (2000ms+) needs headroom for the full citizen flow + export.
+      timeout: 900000,
       testMatch: ['**/features/storefront/**/*.feature.spec.js'],
       use: {
         headless: false,
         viewport: null,
         baseURL: process.env.STOREFRONT_BASE_URL,
-        actionTimeout: 45000,
+        actionTimeout: 30000,
         navigationTimeout: 60000,
       },
     },

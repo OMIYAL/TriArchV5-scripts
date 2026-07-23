@@ -13,7 +13,9 @@ test.describe("Storefront Citizen Service Request Submission", () => {
     await And("completes the intake fee payment via Stripe if required", null, { page });
     await Then("the service request should be submitted successfully", null, { page });
     await And("the tracking number and service request state should be saved", null, { page });
-    await And("Mimik recording is stopped and the guide is exported", null, { page, context });
+    await And("Mimik recording is stopped", null, { page, context });
+    await And("the Mimik guide is opened from the side panel", null, { page, context });
+    await And("the Mimik guide is exported as PDF", null, { page, context });
   });
 
 });
