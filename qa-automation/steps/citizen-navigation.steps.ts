@@ -44,52 +44,40 @@ When('the user navigates to the My Projects page clicks reload and scrolls', asy
 
 When('the citizen clicks on the My Requests', async ({ page }) => {
   const myRequestsPage = new MyRequestsPage(page);
-  const srDetailPage = new SRDetailPage(page);
-  // Store page objects in scenario state so subsequent steps can reuse them
-  const state = getScenarioState(page);
-  state.myRequestsPage = myRequestsPage;
-  state.srDetailPage = srDetailPage;
   await myRequestsPage.navigateToMyRequests();
 });
 
 When('a list of requests appears', async ({ page }) => {
-  const state = getScenarioState(page);
-  await state.myRequestsPage!.waitForListToLoad();
+  await new MyRequestsPage(page).waitForListToLoad();
 });
 
 When('the citizen selects a closed status service request', async ({ page }) => {
-  const state = getScenarioState(page);
-  await state.myRequestsPage!.selectClosedRequest();
+  await new MyRequestsPage(page).selectClosedRequest();
 });
 
 Then('the citizen should be redirected to that closed service request', async ({ page }) => {
-  const state = getScenarioState(page);
-  await state.srDetailPage!.verifyRedirectedToClosedRequest();
+  await new SRDetailPage(page).verifyRedirectedToClosedRequest();
 });
 
 Then('the citizen selects view status history', async ({ page }) => {
-  const state = getScenarioState(page);
-  await state.srDetailPage!.viewStatusHistory();
+  await new SRDetailPage(page).viewStatusHistory();
 });
 
 Then('the citizen selects Application form', async ({ page }) => {
-  const state = getScenarioState(page);
-  await state.srDetailPage!.selectTab('Application form');
+  await new SRDetailPage(page).selectTab('Application form');
 });
 
 Then('the citizen selects Submission checklist', async ({ page }) => {
-  const state = getScenarioState(page);
-  await state.srDetailPage!.selectTab('Submission checklist');
+  await new SRDetailPage(page).selectTab('Submission checklist');
 });
 
 Then('the citizen selects Supporting documents', async ({ page }) => {
-  const state = getScenarioState(page);
-  await state.srDetailPage!.selectTab('Supporting documents');
+  await new SRDetailPage(page).selectTab('Supporting documents');
 });
 
 When('the citizen downloads all available documents', async ({ page }) => {
   const state = getScenarioState(page);
-  const files = await state.srDetailPage!.downloadAllDocuments();
+  const files = await new SRDetailPage(page).downloadAllDocuments();
   state.downloadedFiles = files;
 });
 

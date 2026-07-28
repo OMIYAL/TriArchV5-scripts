@@ -1,9 +1,10 @@
 import { createBdd } from 'playwright-bdd';
+import { expect } from '@playwright/test';
 import { getScenarioState } from '../utils/scenario-state';
-import { DocumentUploadComponent } from '../pages/storefront/document-upload.component';
 import { faker } from '@faker-js/faker';
 import { MyRequestsPage } from '../pages/storefront/my-requests.page';
 import { getRandomTestPdf } from '../utils/document.helper';
+import { DocumentUploadComponent } from '../pages/storefront/document-upload.component';
 
 const { When, Given } = createBdd();
 
@@ -88,15 +89,8 @@ When('the citizen selects the Service Request for the current tracking ID which 
   await searchAndSelectByTrackingNumber(page, state.trackingNumber);
 });
 
-When('the Reviewer selects the Service Request for the current tracking ID which is in {string}', async ({ page }, status: string) => {
-  const state = getScenarioState(page);
-  if (!state.trackingNumber) {
-    throw new Error('No tracking number found in scenario state.');
-  }
-  await searchAndSelectByTrackingNumber(page, state.trackingNumber);
-});
 
-When('the citizen selects submits correction', async ({ page }) => {
+When('the citizen opens the Submit Corrections drawer', async ({ page }) => {
   const submitCorrectionsBtn = page.getByRole('button', { name: 'Submit corrections' }).first();
   await submitCorrectionsBtn.waitFor({ state: 'visible', timeout: 15000 });
   await submitCorrectionsBtn.click();
@@ -111,18 +105,17 @@ When('the citizen selects submits correction', async ({ page }) => {
 When('the citizen uploads a pdf document for correction', async ({ page }) => {
   const pdfPath = getRandomTestPdf();
 
-  // Check for direct file input first inside the drawer or page
-  const fileInput = page.locator('input[type="file"]').first();
-  if (await fileInput.count() > 0) {
-    console.log(`Setting input files directly for correction upload: ${pdfPath}`);
-    await fileInput.setInputFiles(pdfPath);
-  } else {
-    const uploadTrigger = page.getByRole('button', { name: 'Upload document' }).or(page.locator('#OpenSupportingDocumentButton')).first();
-    if (await uploadTrigger.isVisible({ timeout: 5000 }).catch(() => false)) {
-      const documentUpload = new DocumentUploadComponent(page);
-      await documentUpload.uploadIfVisible(undefined, 'Response Letter', 'service');
-    }
-  }
+  // FIX (Finding 4, confirmed via screenshots of the actual running app): the correction
+  // offcanvas has NO native `input[type="file"]` at all.
+  // The real flow: clicking "Upload document" (#AddCorrectionDocumentButton) opens a
+  // SEPARATE "Add supporting document" panel.
+  // We use the shared DocumentUploadComponent (using 'any' mode to bypass service-specific assertions)
+  // to handle the nested interactions safely.
+  const uploader = new DocumentUploadComponent(page);
+  await uploader.uploadRequired(pdfPath, undefined, 'any');
+
+  // Hard assertion — check that a document item (div/li) was added to the list.
+  await expect(page.locator('#CorrectionDocumentsList > *').first()).toBeVisible({ timeout: 10000 });
 });
 
 When('the citizen writes the correction notes', async ({ page }) => {

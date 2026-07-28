@@ -1,4 +1,4 @@
-Feature: Reviewer reviews the service request activity successfully
+Feature: Reviewer rejects a document review activity
 
   As a reviewer I want to review all the activity steps of a service request that has been assigned to me
   So the decision can be submitted successfully

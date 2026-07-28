@@ -169,6 +169,22 @@ export class OffcanvasDecisionComponent extends BasePage {
       }
     }
 
+    // If the caller already pre-checked a radio via data-decision (e.g. revision/rejection/conditional
+    // flows), honour that selection — skip the fee and approve fallbacks entirely. Without this guard
+    // the fallback at the bottom always ran when no decisionName was passed, clicked "Approve", and
+    // overwrote the pre-checked "Needs revision" / "Reject" radio. That's the root cause of the
+    // double-decision bug: revision notes were filled, then the drawer submitted Approval instead.
+    if (!clicked) {
+      const preChecked = await this.drawer
+        .locator('input[name="VerdictOutcome"]:checked')
+        .isVisible({ timeout: 500 })
+        .catch(() => false);
+      if (preChecked) {
+        console.log('Radio already pre-checked by caller — skipping selection fallback and submitting as-is.');
+        clicked = true;
+      }
+    }
+
     // Fee steps: prefer "Waive fee" over "Payment confirmed" so automation does not depend
     // on a real citizen payment having been completed (activity is often ON HOLD / awaiting payment).
     if (!clicked) {

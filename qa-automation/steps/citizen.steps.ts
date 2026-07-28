@@ -57,7 +57,7 @@ When('creates a new project for the service application', async ({ page }) => {
   const createProjectPage = await serviceApply.openCreateProjectPopup();
 
   state.currentProjectData = generateDynamicProjectData();
-  await createProjectPage.completeFullFlow(state.currentProjectData as DynamicProjectData);
+  await createProjectPage.completeFullFlow(state.currentProjectData!);
 
   const rawPopupPage = createProjectPage.getRawPage();
   await rawPopupPage.waitForURL(/projectId=|services\/Apply/i, { timeout: 60000 });
@@ -75,7 +75,7 @@ When('creates a new project for the service application', async ({ page }) => {
 
 When('completes all required form steps and checklists', async ({ page }) => {
   const state = getScenarioState(page);
-  const currentProjectData = state.currentProjectData as DynamicProjectData | null;
+  const currentProjectData = state.currentProjectData;
   if (!currentProjectData) {
     throw new Error('No project data was generated. Ensure the project creation step ran first.');
   }

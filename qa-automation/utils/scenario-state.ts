@@ -1,14 +1,11 @@
 import { Page } from '@playwright/test';
-import { MyRequestsPage } from '../pages/storefront/my-requests.page';
-import { SRDetailPage } from '../pages/sr-detail.page';
+import { DynamicProjectData } from './data-generator.helper';
 
 interface ScenarioState {
   trackingNumber: string;
   assignedReviewers: string[];
   targetServiceUrl: string;
-  currentProjectData: unknown;
-  myRequestsPage: MyRequestsPage | null;
-  srDetailPage: SRDetailPage | null;
+  currentProjectData: DynamicProjectData | null;
   downloadedFiles: unknown[];
 }
 
@@ -21,8 +18,6 @@ export function getScenarioState(page: Page): ScenarioState {
       assignedReviewers: [],
       targetServiceUrl: '',
       currentProjectData: null,
-      myRequestsPage: null,
-      srDetailPage: null,
       downloadedFiles: [],
     });
   }

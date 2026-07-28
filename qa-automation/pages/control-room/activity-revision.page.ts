@@ -1,4 +1,4 @@
-import { Page } from '@playwright/test';
+import { Page, expect } from '@playwright/test';
 import { ActivityReviewPage } from './activity-review.page';
 import { MyRequestsPage } from '../storefront/my-requests.page';
 import { faker } from '@faker-js/faker';
@@ -15,7 +15,8 @@ export class ActivityRevisionPage extends ActivityReviewPage {
   /**
    * Identifies the actual status of the Document Review lane by reading the
    * app's own `ta-activity-lane--st-{status}` class modifier — the reliable
-   * contract (not visible badge text, which is incidental).
+   * contract (not visible badge text, which is incidental). Real observed
+   * values: approved | rejected | active | hold | pending.
    * Returns 'done', 'pending', or 'not-found'.
    */
   private async getDocumentReviewStatus(): Promise<'done' | 'pending' | 'not-found'> {
@@ -27,129 +28,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
       if (!/document\s*review/i.test(typeText ?? '')) continue;
 
       const className = (await lane.getAttribute('class').catch(() => '')) ?? '';
-      if (/--st-(active|pending)\b/.test(className)) return 'pending';
-      // Any other modifier (--st-approved, --st-rejected, --st-needs-revision, …)
-      // means the step has moved past active/pending — no longer actionable.
+      // BP-2: 'hold' is still actionable (e.g. paused pending clarification) — treat it as
+      // pending, not done. Any other modifier (approved, rejected, …) means the step has
+      // moved past active/pending/hold and is no longer actionable for our purposes.
+      if (/--st-(active|pending|hold)\b/.test(className)) return 'pending';
       return 'done';
     }
     return 'not-found';
-  }
-
-  /**
-   * Shared SR-scanning engine used by both revision and rejection flows.
-   *
-   * Iterates UNDER REVIEW SRs, skips multi-reviewer ones and SRs where the
-   * Document Review step is missing or already done, then delegates the actual
-   * per-step processing to `processFn`.
-   *
-   * @param processFn  — async callback that processes one SR; returns `true`
-   *                     when the target outcome (revision / rejection) was
-   *                     successfully triggered, `false` to try the next SR.
-   * @param label      — human-readable label used in console logs ("revision" / "rejection").
-   * @param maxAttempts
-   */
-  private async scanAndTrigger(
-    processFn: (myRequestsPage: MyRequestsPage) => Promise<boolean>,
-    label: string,
-    myRequestsPage: MyRequestsPage,
-    maxAttempts = 20,
-  ): Promise<void> {
-    await myRequestsPage.navigateReloadAndScroll();
-    const visited = new Set<string>();
-    let attempts = 0;
-
-    const trySRs = async (): Promise<boolean> => {
-      const rows = this.page.locator('tbody tr');
-      const count = await rows.count();
-
-      for (let i = 0; i < count; i++) {
-        if (attempts >= maxAttempts) {
-          throw new Error(
-            `Gave up after ${maxAttempts} SRs — none successfully triggered a Document Review ${label}.`
-          );
-        }
-
-        const row = rows.nth(i);
-        const text = await row.textContent().catch(() => '');
-        if (!text?.includes('UNDER REVIEW')) continue;
-
-        const link = row.getByRole('link').first();
-        const href = await link.getAttribute('href').catch(() => null);
-        if (!href || visited.has(href) || !(await link.isVisible().catch(() => false))) continue;
-
-        visited.add(href);
-        attempts++;
-
-        await link.click();
-        await this.page.waitForURL(/ServiceRequests\/(Detail|Activity)/i, {
-          timeout: 30000,
-          waitUntil: 'domcontentloaded',
-        });
-        await this.waitForLoaders();
-
-        // Skip multi-reviewer SRs — parallel steps block the active reviewer.
-        const chips = this.page.locator('.ta-reviewer-chip');
-        await chips.first().waitFor({ state: 'attached', timeout: 5000 }).catch(() => {});
-        const chipCount = await chips.count().catch(() => 0);
-        if (chipCount !== 1) {
-          console.log(`  ⏭ Multi-reviewer SR skipped (${href}). Going back...`);
-          await this.page.goBack({ waitUntil: 'domcontentloaded' });
-          await waitForTableData(this.page);
-          continue;
-        }
-
-        // Quick pre-filter: check the Document Review step's actual status.
-        const docReviewStatus = await this.getDocumentReviewStatus();
-
-        if (docReviewStatus === 'not-found') {
-          console.log(`  ⏭ No Document Review step listed in SR (${href}). Going back...`);
-          await this.page.goBack({ waitUntil: 'domcontentloaded' });
-          await waitForTableData(this.page);
-          continue;
-        }
-
-        if (docReviewStatus === 'done') {
-          console.log(
-            `  ⏭ Document Review already completed in SR (${href}) — no point continuing. Going back...`
-          );
-          await this.page.goBack({ waitUntil: 'domcontentloaded' });
-          await waitForTableData(this.page);
-          continue;
-        }
-
-        // docReviewStatus === 'pending' — still actionable, worth attempting.
-        console.log(`  🔄 Attempting ${label} flow in SR (${href})...`);
-        const triggered = await processFn(myRequestsPage);
-
-        if (triggered) {
-          console.log(`  ✅ Document Review ${label} successfully triggered in SR (${href}).`);
-          return true;
-        }
-
-        console.log(
-          `  ⏭ All steps processed in SR (${href}) without hitting Document Review ` +
-          `(step may belong to another reviewer or is already done). Going back...`
-        );
-        await myRequestsPage.navigateReloadAndScroll();
-      }
-
-      return false;
-    };
-
-    if (await trySRs()) return;
-
-    // Retry once with the "Under Review" filter pill applied.
-    console.log(`No ${label} triggered in default view SRs. Applying "Under Review" filter...`);
-    const filterPill = this.page.getByRole('button', { name: 'Under Review', exact: true }).first();
-    if (await filterPill.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await filterPill.click();
-      await waitForFilteredTableData(this.page);
-      if (await trySRs()) return;
-    }
-
-    throw new Error(
-      `No UNDER REVIEW SR found where a Document Review step could be triggered for ${label}.`
-    );
   }
 
   // ─── Revision flow ────────────────────────────────────────────────────────
@@ -158,17 +43,17 @@ export class ActivityRevisionPage extends ActivityReviewPage {
    * Scans UNDER REVIEW SRs and for each one that has an actionable Document
    * Review step, attempts to trigger a "Needs revision" decision on it.
    *
-   * If an SR is fully processed without hitting a Document Review step
-   * (e.g. the step belongs to a different reviewer or is already done),
-   * the scanner moves on to the next SR automatically.
+   * Uses myRequestsPage.selectActiveRequest with a predicate to pre-filter
+   * single-reviewer SRs that have a pending Document Review step.
    */
-  async selectAndTriggerRevision(myRequestsPage: MyRequestsPage, maxAttempts = 20): Promise<void> {
-    await this.scanAndTrigger(
-      (mrp) => this.processUntilFirstDocumentRevision(mrp),
-      'revision',
-      myRequestsPage,
-      maxAttempts,
-    );
+  async selectAndTriggerRevision(myRequestsPage: MyRequestsPage): Promise<void> {
+    await myRequestsPage.selectActiveRequest(true, false, async () => {
+      const docReviewStatus = await this.getDocumentReviewStatus();
+      if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
+        return false;
+      }
+      return this.processUntilFirstDocumentRevision(myRequestsPage);
+    });
   }
 
   /**
@@ -183,13 +68,19 @@ export class ActivityRevisionPage extends ActivityReviewPage {
    */
   async processUntilFirstDocumentRevision(myRequestsPage: MyRequestsPage, maxSteps = 10): Promise<boolean> {
     // Save tracking number from current page into scenario state if not already set.
-    const bodyText = await this.page.locator('body').innerText().catch(() => '');
-    const trackingMatch = bodyText.match(/([A-Z]{2,4}\d{3}\s*-\s*[A-Z]{2}\s*-\s*\d{4}\s*-\s*\d{5})/);
-    if (trackingMatch) {
-      const trackingNumber = trackingMatch[1].replace(/\s+/g, '');
+    // BP-1: the body-regex approach assumed a 2-letter jurisdiction code and silently skipped
+    // on any format mismatch. The detail page exposes a stable hidden input with the exact
+    // value — use that instead.
+    const trackingNumber = await this.page
+      .locator('#ServiceRequestTrackingNumber')
+      .inputValue()
+      .catch(() => '');
+    if (trackingNumber) {
       const state = getScenarioState(this.page);
       state.trackingNumber = trackingNumber;
       console.log(`Saved scenario tracking number in ActivityRevisionPage: ${trackingNumber}`);
+    } else {
+      console.log('Warning: #ServiceRequestTrackingNumber not found — tracking number not saved.');
     }
 
     return this.processUntilFirstDocumentStep(
@@ -201,24 +92,27 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         const verdictBtn = this.page.locator('#ActivityVerdictButton');
         if (await verdictBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
           await verdictBtn.click();
-          await drawer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+          await drawer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
         }
 
-        // 2. Select "Needs revision" from #DecisionOptions.
-        const revisionOption = drawer
-          .locator('#DecisionOptions label.js-decision-option, #DecisionOptions label')
-          .filter({ hasText: /Needs revision/i })
-          .first();
-        if (await revisionOption.isVisible({ timeout: 5000 }).catch(() => false)) {
-          console.log('Selecting "Needs revision" option from #DecisionOptions...');
-          await revisionOption.click();
-        }
+        // 2. Select "Needs revision" via its stable data-decision attribute — NOT label text.
+        //    Finding 1: label-text `.isVisible().catch(() => false)` with no `else` meant a
+        //    missing/disabled/drifted label silently left the app's own pre-checked default
+        //    (Approve) submitted instead, and the test still went green. The hard
+        //    toBeChecked() assertion below closes that: if the wrong radio ends up checked,
+        //    this fails loudly instead of silently approving.
+        const revisionInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="4"]');
+        await expect(revisionInput).toBeEnabled({ timeout: 5000 });
+        await revisionInput.check();
+        await expect(revisionInput).toBeChecked();
 
         // 3. Wait for #RevisionNotesGroup to appear.
+        //    Finding 6: this group toggles ONLY when the checked option's data-note === 'Revision'
+        //    — it's the app's own confirmation that the correct radio is active. Swallowing its
+        //    absence as a warning let the wrong-verdict case (Finding 1) through unnoticed; making
+        //    it a hard assertion closes that gap for the revision path specifically.
         const revisionNotesGroup = drawer.locator('#RevisionNotesGroup');
-        await revisionNotesGroup.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {
-          console.log('Warning: #RevisionNotesGroup was not visible within 5s');
-        });
+        await expect(revisionNotesGroup).toBeVisible({ timeout: 5000 });
 
         // 4. Fill Revision Notes.
         const notesInput = revisionNotesGroup.locator('textarea, input').first();
@@ -227,8 +121,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
           await notesInput.fill(`Automation Revision Note: ${faker.lorem.sentence()}`);
         }
 
-        // 5. Submit.
-        await this.submitDecision('Needs revision');
+        // 5. Submit — the "Needs revision" radio is already checked (confirmed by toBeChecked()
+        //    above). Calling submitDecision() WITHOUT a decisionName so it does not try to
+        //    re-select by label text (which can deselect the pre-checked radio if the text match
+        //    lands on a parent element, causing the fallback to silently submit "Approve" instead).
+        //    The checked-radio guard at line 206 of submitDecision() still confirms a radio IS
+        //    selected before clicking #SubmitVerdictButton.
+        await this.submitDecision();
         console.log('First document review step marked for revision. Halting further processing.');
       },
     );
@@ -240,16 +139,17 @@ export class ActivityRevisionPage extends ActivityReviewPage {
    * Scans UNDER REVIEW SRs and for each one that has an actionable Document
    * Review step, attempts to trigger a "Reject" decision on it.
    *
-   * If an SR is fully processed without hitting a Document Review step,
-   * the scanner moves on to the next SR automatically.
+   * Uses myRequestsPage.selectActiveRequest with a predicate to pre-filter
+   * single-reviewer SRs that have a pending Document Review step.
    */
-  async selectAndTriggerRejection(myRequestsPage: MyRequestsPage, maxAttempts = 20): Promise<void> {
-    await this.scanAndTrigger(
-      (mrp) => this.processUntilFirstDocumentRejection(mrp),
-      'rejection',
-      myRequestsPage,
-      maxAttempts,
-    );
+  async selectAndTriggerRejection(myRequestsPage: MyRequestsPage): Promise<void> {
+    await myRequestsPage.selectActiveRequest(true, false, async () => {
+      const docReviewStatus = await this.getDocumentReviewStatus();
+      if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
+        return false;
+      }
+      return this.processUntilFirstDocumentRejection(myRequestsPage);
+    });
   }
 
   /**
@@ -276,32 +176,26 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         const verdictBtn = this.page.locator('#ActivityVerdictButton');
         if (await verdictBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
           await verdictBtn.click();
-          await drawer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+          await drawer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
         }
 
-        // 2. Select 'Reject' option explicitly from #DecisionOptions.
-        const rejectOption = drawer
-          .locator('#DecisionOptions label.js-decision-option, #DecisionOptions label')
-          .filter({ hasText: /Reject/i })
-          .first();
-        if (await rejectOption.isVisible({ timeout: 5000 }).catch(() => false)) {
-          console.log('Selecting "Reject" option from #DecisionOptions...');
-          await rejectOption.click();
-        }
+        // 2. Select 'Reject' via its stable data-decision attribute — NOT label text.
+        //    Same Finding 1 reasoning as the revision path above.
+        const rejectInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="2"]');
+        await expect(rejectInput).toBeEnabled({ timeout: 5000 });
+        await rejectInput.check();
+        await expect(rejectInput).toBeChecked();
 
-        // 3. Fill rejection reason if a notes field appears after selecting Reject.
-        const rejectionNotesGroup = drawer.locator('#RejectionNotesGroup, #RejectNotesGroup').first();
-        if (await rejectionNotesGroup.isVisible({ timeout: 3000 }).catch(() => false)) {
-          const notesInput = rejectionNotesGroup.locator('textarea, input').first();
-          if (await notesInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-            console.log('Filling Rejection Notes...');
-            await notesInput.fill(`Automation Rejection Note: ${faker.lorem.sentence()}`);
-          }
-        }
+        // Finding 5: the previous "#RejectionNotesGroup, #RejectNotesGroup" block is deleted.
+        // Neither ID exists in the actual drawer markup (only ConditionalNotesGroup,
+        // RevisionNotesGroup, OnHoldReasonGroup are real) — Reject requires no notes at all.
+        // The old block cost a 3s isVisible timeout every run for coverage that never existed.
 
-        // 4. Submit — drawer is already open and Reject option already selected.
-        //    submitDecision will confirm the pre-selected radio and click #SubmitVerdictButton.
-        await this.submitDecision('Reject');
+        // 3. Submit — drawer is already open and Reject option already selected via data-decision.
+        //    Calling submitDecision() WITHOUT a decisionName so it does not try to re-select
+        //    by label text (same race as the revision path above). The checked-radio guard
+        //    in submitDecision() confirms the radio is still checked before submitting.
+        await this.submitDecision();
         console.log('First document review step rejected. Halting further processing.');
       },
     );
@@ -355,15 +249,23 @@ export class ActivityRevisionPage extends ActivityReviewPage {
               // Halt — revision / rejection: stop after the first doc step.
               return true;
             }
-            // Continue — conditional: fall through so remaining steps are processed.
+            // Continue — conditional: fall through to the outer loop for remaining steps.
+            success = true;
+          } else {
+            // FIX (Finding 7): previously this branch had no `else` — when
+            // continueAfterDocStep was true, execution fell straight through into
+            // completeGeneralReview()/completePackaging()/submitDecision() on the SAME
+            // step that onDocumentStep() had just submitted a verdict for, double-submitting
+            // a decision on one activity. Latent while the only caller used the false
+            // default, but reviewer-conditional.steps.ts now uses continueAfterDocStep=true,
+            // making this live. The guard ensures non-document processing only runs when
+            // we're not on the step we just handled.
+            console.log('Non-document step detected. Processing normally...');
+            await this.completeGeneralReview();
+            await this.completePackaging();
+            await this.submitDecision();
             success = true;
           }
-
-          console.log('Non-document step detected. Processing normally...');
-          await this.completeGeneralReview();
-          await this.completePackaging();
-          await this.submitDecision();
-          success = true;
         } catch (e: any) {
           retries++;
           if (retries >= 2) throw e;
@@ -408,6 +310,23 @@ export class ActivityRevisionPage extends ActivityReviewPage {
   // ─── Conditional flow ────────────────────────────────────────────────────────
 
   /**
+   * Scans UNDER REVIEW SRs and for each one that has an actionable Document
+   * Review step, processes all steps, applying a Conditional decision on the Document Review step.
+   */
+  async selectAndTriggerConditional(myRequestsPage: MyRequestsPage): Promise<void> {
+    await myRequestsPage.selectActiveRequest(true, false, async () => {
+      const docReviewStatus = await this.getDocumentReviewStatus();
+      if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
+        return false; // Skip this SR, it doesn't have a pending doc step
+      }
+      
+      // Found a valid SR. Process it.
+      await this.processAllWithConditionalDocStep(myRequestsPage);
+      return true; // We successfully processed it, stop scanning
+    });
+  }
+
+  /**
    * Processes ALL active activity steps for the current SR, applying a Conditional
    * decision specifically on the Document Review step.
    *
@@ -435,18 +354,15 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         const verdictBtn = this.page.locator('#ActivityVerdictButton');
         if (await verdictBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
           await verdictBtn.click();
-          await drawer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+          await drawer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
         }
 
-        // 2. Select 'Conditional' option explicitly from #DecisionOptions.
-        const conditionalOption = drawer
-          .locator('#DecisionOptions label.js-decision-option, #DecisionOptions label')
-          .filter({ hasText: /Conditional/i })
-          .first();
-        if (await conditionalOption.isVisible({ timeout: 5000 }).catch(() => false)) {
-          console.log('Selecting "Conditional" option from #DecisionOptions...');
-          await conditionalOption.click();
-        }
+        // 2. Select 'Conditional' via its stable data-decision attribute — NOT label text.
+        //    Same Finding 1 reasoning as the revision/rejection paths above.
+        const conditionalInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="1"]');
+        await expect(conditionalInput).toBeEnabled({ timeout: 5000 });
+        await conditionalInput.check();
+        await expect(conditionalInput).toBeChecked();
 
         // 3. Fill Conditional Notes if the field appears after selecting Conditional.
         //    The field is required before #SubmitVerdictButton becomes enabled.
@@ -460,9 +376,10 @@ export class ActivityRevisionPage extends ActivityReviewPage {
           await notesInput.fill('Conditional approval — subject to outstanding conditions being met.');
         }
 
-        // 4. Submit — drawer already open, Conditional option already selected.
-        //    submitDecision handles the network wait, redirect, and loaders.
-        await this.submitDecision('Conditional');
+        // 4. Submit — drawer already open, Conditional option already checked via data-decision.
+        //    Same reasoning as revision/rejection: pass NO decisionName so submitDecision()
+        //    does not try to re-select by label text and accidentally deselect the pre-checked radio.
+        await this.submitDecision();
         console.log('Document review step conditionally approved. Handing off to processActivities...');
       },
       // continueAfterDocStep=false: halt the loop after conditional approval.

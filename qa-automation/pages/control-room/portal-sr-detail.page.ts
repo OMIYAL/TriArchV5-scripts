@@ -257,20 +257,24 @@ export class PortalSRDetailPage extends BasePage {
     await btnToClick.click();
     console.log('Clicked Launch Review — waiting for confirmation popup...');
 
-    // Give the SweetAlert2 animation a moment to start before polling.
-    await this.page.waitForTimeout(500);
-
-    // SweetAlert2 confirm button — if the popup doesn't appear, retry the click once
-    // (handles the rare case where the first click was swallowed by a transitional overlay).
     const swalConfirm = this.page.locator('button.swal2-confirm');
-    const popupVisible = await swalConfirm.isVisible({ timeout: 8000 }).catch(() => false);
-    if (!popupVisible) {
-      console.log('  ⚠️ Popup did not appear after first click — retrying Launch Review click...');
-      await btnToClick.scrollIntoViewIfNeeded();
-      await btnToClick.click();
-      await this.page.waitForTimeout(500);
+    
+    // Check if the popup appears. If it does not appear within 8 seconds,
+    // we only retry the click if the Launch Review button is still actionable
+    // (i.e. the click didn't trigger an overlay or navigation).
+    try {
+      await swalConfirm.waitFor({ state: 'visible', timeout: 8000 });
+    } catch {
+      console.log('  ⚠️ Popup did not appear after 8s — checking if button is still actionable before retrying...');
+      if (await btnToClick.isVisible() && await btnToClick.isEnabled()) {
+        await btnToClick.scrollIntoViewIfNeeded();
+        await btnToClick.click();
+        await swalConfirm.waitFor({ state: 'visible', timeout: 10000 });
+      } else {
+        throw new Error('Popup did not appear, but Launch button is no longer clickable (page may have navigated or is loading).');
+      }
     }
-    await swalConfirm.waitFor({ state: 'visible', timeout: 10000 });
+
     await swalConfirm.click();
     console.log('Confirmed "Launch review" in popup.');
 
