@@ -43,7 +43,7 @@ export class ActivityReviewPage extends BasePage {
    * Returns true if the current activity page has a document/plan viewer.
    * Uses a short timeout so non-doc steps skip immediately without long waits.
    */
-  private async isDocumentStep(): Promise<boolean> {
+  protected async isDocumentStep(): Promise<boolean> {
     const viewer = this.page.locator(
       '#ta-doc-review-viewer, #ta-plan-review-viewer, .ta-plan-review-surface__stage'
     ).first();

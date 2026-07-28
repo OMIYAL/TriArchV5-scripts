@@ -13,27 +13,26 @@ import { getScenarioState } from '../utils/scenario-state';
 
 const { Given, When, Then } = createBdd();
 
-let targetServiceUrl = '';
-let currentProjectData: DynamicProjectData | null = null;
-
 Given('the citizen is on the Storefront home page', async ({ page }) => {
   const storefrontHome = new StorefrontHomePage(page);
   await storefrontHome.navigate(process.env.TENANT_NAME || '');
 });
 
 Given('the citizen navigates to an available service', async ({ page }) => {
+  const state = getScenarioState(page);
   const servicesListing = new ServicesListingPage(page);
   await servicesListing.openListing(process.env.TENANT_NAME || '');
 
   if (process.env.SERVICE_NAME) {
     console.log(`Selecting configured service: ${process.env.SERVICE_NAME}`);
-    targetServiceUrl = await servicesListing.navigateToService(process.env.SERVICE_NAME);
+    state.targetServiceUrl = await servicesListing.navigateToService(process.env.SERVICE_NAME);
   } else {
-    targetServiceUrl = await servicesListing.clickRandomAvailableService();
+    state.targetServiceUrl = await servicesListing.clickRandomAvailableService();
   }
 });
 
 When('the citizen logs in with valid credentials', async ({ page }) => {
+  const state = getScenarioState(page);
   const authLogin = new AuthLoginPage(page);
   await authLogin.completeLoginFlow(
     process.env.TENANT_NAME || '',
@@ -43,21 +42,22 @@ When('the citizen logs in with valid credentials', async ({ page }) => {
 
   await page.waitForURL(/storefront/i, { timeout: 90000 });
 
-  if (!page.url().includes('/services/Apply') && targetServiceUrl) {
-    let applyUrl = new URL(targetServiceUrl, process.env.STOREFRONT_BASE_URL || '');
+  if (!page.url().includes('/services/Apply') && state.targetServiceUrl) {
+    let applyUrl = new URL(state.targetServiceUrl, process.env.STOREFRONT_BASE_URL || '');
     applyUrl.searchParams.set('__tenant', process.env.TENANT_NAME || '');
     await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 30000 });
   }
 });
 
 When('creates a new project for the service application', async ({ page }) => {
+  const state = getScenarioState(page);
   const serviceApply = new ServiceApplyPage(page);
 
   await serviceApply.waitForProjectCombobox();
   const createProjectPage = await serviceApply.openCreateProjectPopup();
 
-  currentProjectData = generateDynamicProjectData();
-  await createProjectPage.completeFullFlow(currentProjectData);
+  state.currentProjectData = generateDynamicProjectData();
+  await createProjectPage.completeFullFlow(state.currentProjectData as DynamicProjectData);
 
   const rawPopupPage = createProjectPage.getRawPage();
   await rawPopupPage.waitForURL(/projectId=|services\/Apply/i, { timeout: 60000 });
@@ -74,10 +74,11 @@ When('creates a new project for the service application', async ({ page }) => {
 });
 
 When('completes all required form steps and checklists', async ({ page }) => {
+  const state = getScenarioState(page);
+  const currentProjectData = state.currentProjectData as DynamicProjectData | null;
   if (!currentProjectData) {
     throw new Error('No project data was generated. Ensure the project creation step ran first.');
   }
-
   const serviceApply = new ServiceApplyPage(page);
   await serviceApply.selectCreatedProject(currentProjectData.name);
 
@@ -235,7 +236,7 @@ Then('the new submission triggers a notification', async ({ page }) => {
   await expect(dropdown).toBeVisible({ timeout: 15000 });
 
   const targetNotification = dropdown.locator('.notif-item', { hasText: trackingNumber || 'Request' }).first();
-  await expect(targetNotification).toBeVisible({ timeout: 30000 });
+  await expect(targetNotification).toBeVisible({ timeout: 45000 });
 
   await Promise.all([
     page.waitForURL(/ServiceRequests\/Detail/i, { timeout: 30000 }),

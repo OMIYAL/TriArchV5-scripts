@@ -16,7 +16,7 @@ export class MyRequestsPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.serviceRequestsLink = page.getByRole('link', { name: 'Service Requests' });
+    this.serviceRequestsLink = page.getByRole('link', { name: /Service Requests|My Requests/ });
     this.reloadTableButton = page.getByRole('button', { name: 'Reload table' });
   }
 
@@ -131,8 +131,8 @@ export class MyRequestsPage extends BasePage {
       requireSingleReviewer
         ? 'No single-reviewer UNDER REVIEW service request found.'
         : requireMultiReviewer
-        ? 'No multi-reviewer UNDER REVIEW service request found.'
-        : 'No service requests found with status UNDER REVIEW.'
+          ? 'No multi-reviewer UNDER REVIEW service request found.'
+          : 'No service requests found with status UNDER REVIEW.'
     );
   }
 
