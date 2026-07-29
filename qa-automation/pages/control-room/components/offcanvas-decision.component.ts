@@ -135,7 +135,7 @@ export class OffcanvasDecisionComponent extends BasePage {
     }
   }
 
-  async submitDecision(decisionName?: string) {
+  async submitDecision(decisionName?: string, opts?: { preSelected?: boolean }) {
     // Both General Review and Fee use #ActivityVerdictButton at the top to open the drawer.
     // The drawer does NOT auto-open — an explicit click is always needed.
     await this.openDecisionDrawer();
@@ -169,20 +169,19 @@ export class OffcanvasDecisionComponent extends BasePage {
       }
     }
 
-    // If the caller already pre-checked a radio via data-decision (e.g. revision/rejection/conditional
-    // flows), honour that selection — skip the fee and approve fallbacks entirely. Without this guard
-    // the fallback at the bottom always ran when no decisionName was passed, clicked "Approve", and
-    // overwrote the pre-checked "Needs revision" / "Reject" radio. That's the root cause of the
-    // double-decision bug: revision notes were filled, then the drawer submitted Approval instead.
-    if (!clicked) {
-      const preChecked = await this.drawer
-        .locator('input[name="VerdictOutcome"]:checked')
-        .isVisible({ timeout: 500 })
-        .catch(() => false);
-      if (preChecked) {
-        console.log('Radio already pre-checked by caller — skipping selection fallback and submitting as-is.');
-        clicked = true;
-      }
+    // If the caller explicitly pre-selected a radio via data-decision (e.g. revision / rejection /
+    // conditional flows), honour that selection — skip the fee and approve fallbacks entirely.
+    //
+    // IMPORTANT: do NOT infer this from input[name="VerdictOutcome"]:checked — the server
+    // always pre-checks the first enabled option (ActivityVerdictDrawer.cshtml:65), so
+    // :checked is truthy on every render, and the implicit check would skip the fee-waive
+    // and positive-outcome fallbacks for every caller that passes no decisionName.
+    if (!clicked && opts?.preSelected) {
+      await expect(
+        this.drawer.locator('input[name="VerdictOutcome"]:checked')
+      ).toHaveCount(1, { timeout: 5000 });
+      console.log('Radio pre-selected by caller — skipping selection fallback and submitting as-is.');
+      clicked = true;
     }
 
     // Fee steps: prefer "Waive fee" over "Payment confirmed" so automation does not depend

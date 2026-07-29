@@ -127,7 +127,7 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         //    lands on a parent element, causing the fallback to silently submit "Approve" instead).
         //    The checked-radio guard at line 206 of submitDecision() still confirms a radio IS
         //    selected before clicking #SubmitVerdictButton.
-        await this.submitDecision();
+        await this.submitDecision(undefined, { preSelected: true });
         console.log('First document review step marked for revision. Halting further processing.');
       },
     );
@@ -195,7 +195,7 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         //    Calling submitDecision() WITHOUT a decisionName so it does not try to re-select
         //    by label text (same race as the revision path above). The checked-radio guard
         //    in submitDecision() confirms the radio is still checked before submitting.
-        await this.submitDecision();
+        await this.submitDecision(undefined, { preSelected: true });
         console.log('First document review step rejected. Halting further processing.');
       },
     );
@@ -208,15 +208,15 @@ export class ActivityRevisionPage extends ActivityReviewPage {
    * On the FIRST document review step the 3-stage doc flow runs, then `onDocumentStep`
    * is called to perform the scenario-specific decision.
    *
-   * @param continueAfterDocStep
-   *   false (default) — return true immediately after the doc step (revision / rejection).
-   *   true            — continue processing remaining steps after the doc step (conditional).
+   * Always halts after the doc step — revision, rejection, and conditional all stop here;
+   * the conditional flow's Phase 2 is handled by `processActivities` in its caller.
+   * The `continueAfterDocStep` parameter has been removed: no current caller uses `true`,
+   * and the two-phase design in `processAllWithConditionalDocStep` is clearer and safer.
    */
   private async processUntilFirstDocumentStep(
     myRequestsPage: MyRequestsPage,
     maxSteps: number,
     onDocumentStep: () => Promise<void>,
-    continueAfterDocStep = false,
   ): Promise<boolean> {
     let stepsProcessed = 0;
     let docStepHandled = false;
@@ -245,12 +245,8 @@ export class ActivityRevisionPage extends ActivityReviewPage {
             await onDocumentStep();
             docStepHandled = true;
 
-            if (!continueAfterDocStep) {
-              // Halt — revision / rejection: stop after the first doc step.
-              return true;
-            }
-            // Continue — conditional: fall through to the outer loop for remaining steps.
-            success = true;
+            // Always halt after the doc step. Phase 2 is the caller's responsibility.
+            return true;
           } else {
             // FIX (Finding 7): previously this branch had no `else` — when
             // continueAfterDocStep was true, execution fell straight through into
@@ -311,18 +307,18 @@ export class ActivityRevisionPage extends ActivityReviewPage {
 
   /**
    * Scans UNDER REVIEW SRs and for each one that has an actionable Document
-   * Review step, processes all steps, applying a Conditional decision on the Document Review step.
+   * Review step, processes all steps applying a Conditional decision on the Document Review step.
+   *
+   * The predicate returns false to skip SRs without a pending doc step, and returns
+   * phase 1's boolean so the scanner only stops when a doc step was actually handled.
    */
   async selectAndTriggerConditional(myRequestsPage: MyRequestsPage): Promise<void> {
     await myRequestsPage.selectActiveRequest(true, false, async () => {
       const docReviewStatus = await this.getDocumentReviewStatus();
       if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
-        return false; // Skip this SR, it doesn't have a pending doc step
+        return false; // Skip — no pending doc step here
       }
-      
-      // Found a valid SR. Process it.
-      await this.processAllWithConditionalDocStep(myRequestsPage);
-      return true; // We successfully processed it, stop scanning
+      return this.processAllWithConditionalDocStep(myRequestsPage);
     });
   }
 
@@ -330,20 +326,25 @@ export class ActivityRevisionPage extends ActivityReviewPage {
    * Processes ALL active activity steps for the current SR, applying a Conditional
    * decision specifically on the Document Review step.
    *
-   * Two-phase approach (mirrors reviewer.steps.ts processActivities):
-   *  Phase 1 — processUntilFirstDocumentStep (continueAfterDocStep=false):
+   * Two-phase approach:
+   *  Phase 1 — processUntilFirstDocumentStep:
    *    · Non-doc steps before the doc step are approved normally.
    *    · The first Document Review step is conditionally approved, then the loop halts.
+   *    · Returns true if a doc step was found and handled, false if the loop exhausted
+   *      all steps without hitting a doc step.
    *  Phase 2 — processActivities (inherited from ActivityReviewPage):
-   *    · All remaining steps after the conditional approval are processed with the same
-   *      proven logic used in reviewer.steps.ts (Waive fee, packaging, issuance, etc.).
+   *    · Only runs when Phase 1 returned true (a doc step was actually found).
+   *    · Handles all remaining steps: fee waiver, packaging, issuance, etc.
+   *
+   * Returns true when Phase 1 handled a doc step (safe for the scanner predicate
+   * in selectAndTriggerConditional to use as its "stop scanning" signal).
    */
   async processAllWithConditionalDocStep(
     myRequestsPage: MyRequestsPage,
     maxSteps = 15,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Phase 1: process steps up to and including the Document Review conditional approval.
-    await this.processUntilFirstDocumentStep(
+    const docStepHandled = await this.processUntilFirstDocumentStep(
       myRequestsPage,
       maxSteps,
       async () => {
@@ -376,18 +377,23 @@ export class ActivityRevisionPage extends ActivityReviewPage {
           await notesInput.fill('Conditional approval — subject to outstanding conditions being met.');
         }
 
-        // 4. Submit — drawer already open, Conditional option already checked via data-decision.
-        //    Same reasoning as revision/rejection: pass NO decisionName so submitDecision()
-        //    does not try to re-select by label text and accidentally deselect the pre-checked radio.
-        await this.submitDecision();
+        // 4. Submit — drawer open, Conditional radio pre-checked via data-decision.
+        //    Pass { preSelected: true } so submitDecision() honours the pre-checked radio
+        //    and does not run the fee/approve fallbacks (which would fire because the server
+        //    also pre-checks a different option on every render, making :checked always truthy).
+        await this.submitDecision(undefined, { preSelected: true });
         console.log('Document review step conditionally approved. Handing off to processActivities...');
       },
-      // continueAfterDocStep=false: halt the loop after conditional approval.
-      // Phase 2 (processActivities) takes over for all remaining steps.
     );
 
+    if (!docStepHandled) {
+      console.log('processAllWithConditionalDocStep: no Document Review step found — skipping Phase 2.');
+      return false;
+    }
+
     // Phase 2: process all remaining steps using the same reviewer workflow logic.
-    // processActivities handles fee waiver, issuance, packaging — identical to reviewer.steps.ts.
+    // Only reached when Phase 1 confirmed a doc step was found and conditionally approved.
     await this.processActivities(myRequestsPage, maxSteps);
+    return true;
   }
 }

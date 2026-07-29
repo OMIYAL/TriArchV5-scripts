@@ -12,11 +12,15 @@ const { When, Then } = createBdd();
  * and reused from the feature file without re-declaration here.
  *
  * All activity-processing logic lives in ActivityRevisionPage:
- *   processAllWithConditionalDocStep → processUntilFirstDocumentStep (continueAfterDocStep=true)
- *     · Non-document steps        → approved normally (generalReview + packaging + submitDecision)
- *     · First Document Review step → Conditional selected from #DecisionOptions, notes filled,
- *                                    submitDecision('Conditional'), then loop continues
- *     · All remaining steps        → approved normally until no more open activities
+ *   selectAndTriggerConditional → selectActiveRequest (skips SRs with no pending doc step)
+ *     → processAllWithConditionalDocStep:
+ *   Phase 1 (processUntilFirstDocumentStep):
+ *     · Non-document steps → approved normally (generalReview + packaging + submitDecision)
+ *     · First Document Review step → Conditional selected from #DecisionOptions via
+ *       data-decision attribute, notes filled, submitDecision({preSelected:true}) called,
+ *       then loop halts.
+ *   Phase 2 (processActivities):
+ *     · All remaining steps approved normally until no more open activities.
  */
 
 When('the Reviewer selects a Service Request and triggers the Conditional decision on the Document Review step', async ({ page }) => {
@@ -40,7 +44,7 @@ When('the Reviewer selects a Service Request and triggers the Conditional decisi
  * lane matching the named activity keeps this correct even if other steps in the same
  * SR were also approved.
  */
-When(
+Then(
   'the Reviewer selects the {string} option for the {string} activity only',
   async ({ page }, decision: string, activity: string) => {
     const lane = page.locator('.ta-activity-lane').filter({ hasText: new RegExp(activity, 'i') }).first();

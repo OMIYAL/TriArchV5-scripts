@@ -28,7 +28,7 @@ export class ActivityReviewPage extends BasePage {
   async applyApprovedStamp() { await this.documentViewer.applyApprovedStamp(); }
 
   // --- Decision Drawer 
-  async submitDecision(decisionName?: string) { await this.decisionDrawer.submitDecision(decisionName); }
+  async submitDecision(decisionName?: string, opts?: { preSelected?: boolean }) { await this.decisionDrawer.submitDecision(decisionName, opts); }
 
   // --- General Review & Fee Checklist 
 
@@ -117,3 +117,4 @@ export class ActivityReviewPage extends BasePage {
     }
   }
 }
+

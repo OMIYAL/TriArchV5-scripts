@@ -1,3 +1,4 @@
+@long-flow
 Feature: Dual-reviewer workflow where two reviewers split the activity steps
 
   As a system with two reviewers assigned to the same Service Request
