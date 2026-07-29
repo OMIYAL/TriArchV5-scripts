@@ -206,7 +206,7 @@ export class PortalSRDetailPage extends BasePage {
       // 'hidden'}) on an overlay that likely hadn't appeared yet, which resolves instantly
       // and doesn't prove anything — hence needing two guessed sleeps to paper over it.
       const overlay = this.page.locator('div.abp-block-area.abp-block-area-busy');
-      await overlay.waitFor({ state: 'visible', timeout: 5000 }).catch((e: any) => { console.log(`  ℹ️ Overlay did not become visible (fast save): ${e.message}`); });
+      await overlay.waitFor({ state: 'visible', timeout: 6000 }).catch((e: any) => { console.log(`  ℹ️ Overlay did not become visible (fast save): ${e.message}`); });
       await overlay.waitFor({ state: 'hidden', timeout: 30000 });
 
       console.log(`  ✅ Step ${i + 1} assigned to "${reviewerUsername}"`);
@@ -227,46 +227,62 @@ export class PortalSRDetailPage extends BasePage {
   async launchReview(): Promise<void> {
     // Scroll to top so both Launch Review buttons are accessible
     await this.page.evaluate(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
-    // FIX: replaced fixed 3000ms "wait for smooth scroll to finish" sleep with an actual poll
-    // of scrollY reaching 0 — smooth-scroll duration varies by browser and by the user's
-    // reduced-motion settings, so a guessed fixed duration is exactly the kind of thing that's
-    // sometimes too short (flaky) and always too long on fast runs (slow).
+    // Wait for smooth scroll to complete (scrollY == 0) rather than a fixed sleep.
     await this.page.waitForFunction(() => window.scrollY === 0, { timeout: 5000 }).catch(() => {
       console.log('  ⚠️ Scroll-to-top did not confirm within 5s — proceeding anyway.');
     });
 
-    // Try the mirror button (Next Action panel) first;
-    // fall back to the fixed top-right header button (#LaunchReviewButton)
-    const mirrorBtn = this.page.locator('button.js-launch-review-mirror').first();
+    // Prefer the fixed header button (always in viewport after scroll-to-top);
+    // fall back to the "Next Action" mirror button if the header button isn't present.
     const headerBtn = this.page.locator('button#LaunchReviewButton').first();
+    const mirrorBtn = this.page.locator('button.js-launch-review-mirror').first();
 
-    let clicked = false;
-    if (await mirrorBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await mirrorBtn.click();
-      clicked = true;
-    } else if (await headerBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await headerBtn.click();
-      clicked = true;
+    // Determine which button to use — wait up to 10s for either to become visible.
+    let btnToClick = headerBtn;
+    const headerVisible = await headerBtn.isVisible({ timeout: 10000 }).catch(() => false);
+    if (!headerVisible) {
+      console.log('  ℹ️ Header Launch Review button not visible — trying Next Action panel button.');
+      const mirrorVisible = await mirrorBtn.isVisible({ timeout: 5000 }).catch(() => false);
+      if (!mirrorVisible) {
+        throw new Error('Neither #LaunchReviewButton nor .js-launch-review-mirror is visible — cannot launch review.');
+      }
+      btnToClick = mirrorBtn;
     }
 
-    if (!clicked) {
-      // Last resort: wait longer for either button
-      await Promise.race([
-        mirrorBtn.waitFor({ state: 'visible', timeout: 15000 }).then(() => mirrorBtn.click()),
-        headerBtn.waitFor({ state: 'visible', timeout: 15000 }).then(() => headerBtn.click()),
-      ]);
-    }
+    // Scroll the chosen button into view and wait for it to be enabled.
+    await btnToClick.scrollIntoViewIfNeeded();
+    await btnToClick.waitFor({ state: 'visible', timeout: 5000 });
+    await expect(btnToClick).toBeEnabled({ timeout: 5000 });
+
+    await btnToClick.click();
     console.log('Clicked Launch Review — waiting for confirmation popup...');
 
-    // SweetAlert2 confirm button — exact class from DevTools screenshot
     const swalConfirm = this.page.locator('button.swal2-confirm');
-    await swalConfirm.waitFor({ state: 'visible', timeout: 10000 });
+    
+    // Check if the popup appears. If it does not appear within 8 seconds,
+    // we only retry the click if the Launch Review button is still actionable
+    // (i.e. the click didn't trigger an overlay or navigation).
+    try {
+      await swalConfirm.waitFor({ state: 'visible', timeout: 8000 });
+    } catch {
+      console.log('  ⚠️ Popup did not appear after 8s — checking if button is still actionable before retrying...');
+      if (await btnToClick.isVisible() && await btnToClick.isEnabled()) {
+        await btnToClick.scrollIntoViewIfNeeded();
+        await btnToClick.click();
+        await swalConfirm.waitFor({ state: 'visible', timeout: 10000 });
+      } else {
+        throw new Error('Popup did not appear, but Launch button is no longer clickable (page may have navigated or is loading).');
+      }
+    }
+
     await swalConfirm.click();
     console.log('Confirmed "Launch review" in popup.');
 
-    // Wait for the ABP loading overlay to appear then fully disappear
+    // Wait for the ABP loading overlay to appear then fully disappear.
     const overlay = this.page.locator('div.abp-block-area.abp-block-area-busy');
-    await overlay.waitFor({ state: 'visible', timeout: 10000 });
+    await overlay.waitFor({ state: 'visible', timeout: 10000 }).catch(() => {
+      console.log('  ℹ️ ABP overlay did not appear (fast response) — continuing.');
+    });
     await overlay.waitFor({ state: 'hidden', timeout: 60000 });
 
     console.log('✅ Review launched — workflow is now active.');

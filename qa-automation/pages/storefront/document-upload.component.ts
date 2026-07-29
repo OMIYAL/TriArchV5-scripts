@@ -6,7 +6,7 @@ import {
 } from '../../utils/document.helper';
 
 export class DocumentUploadComponent {
-  constructor(private readonly page: Page) {}
+  constructor(private readonly page: Page) { }
 
   private projectUploadPanel(): Locator {
     return this.page.locator('#UploadDocumentPanel.show');
@@ -31,7 +31,7 @@ export class DocumentUploadComponent {
     if (mode === 'project') {
       return this.page.locator('#AddDocumentButton');
     }
-    return this.page.locator('#OpenSupportingDocumentButton, #AddDocumentButton').first();
+    return this.page.locator('#OpenSupportingDocumentButton, #AddDocumentButton, #AddCorrectionDocumentButton').first();
   }
 
   private async pickDocumentTitle(panel: Locator, title?: string): Promise<string> {

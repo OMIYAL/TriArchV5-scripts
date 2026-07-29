@@ -28,7 +28,7 @@ export class ActivityReviewPage extends BasePage {
   async applyApprovedStamp() { await this.documentViewer.applyApprovedStamp(); }
 
   // --- Decision Drawer 
-  async submitDecision(decisionName?: string) { await this.decisionDrawer.submitDecision(decisionName); }
+  async submitDecision(decisionName?: string, opts?: { preSelected?: boolean }) { await this.decisionDrawer.submitDecision(decisionName, opts); }
 
   // --- General Review & Fee Checklist 
 
@@ -43,7 +43,7 @@ export class ActivityReviewPage extends BasePage {
    * Returns true if the current activity page has a document/plan viewer.
    * Uses a short timeout so non-doc steps skip immediately without long waits.
    */
-  private async isDocumentStep(): Promise<boolean> {
+  protected async isDocumentStep(): Promise<boolean> {
     const viewer = this.page.locator(
       '#ta-doc-review-viewer, #ta-plan-review-viewer, .ta-plan-review-surface__stage'
     ).first();
@@ -117,3 +117,4 @@ export class ActivityReviewPage extends BasePage {
     }
   }
 }
+

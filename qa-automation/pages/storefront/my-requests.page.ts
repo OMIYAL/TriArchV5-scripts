@@ -16,14 +16,22 @@ export class MyRequestsPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.serviceRequestsLink = page.getByRole('link', { name: 'Service Requests' });
+    // Use .first() to avoid strict-mode violation: the Control Room pages render
+    // a sidebar nav link AND a breadcrumb link both matching this text.
+    this.serviceRequestsLink = page.getByRole('link', { name: /Service Requests|My Requests/ }).first();
     this.reloadTableButton = page.getByRole('button', { name: 'Reload table' });
   }
 
   async navigateToMyRequests(): Promise<void> {
     if (/ControlRoom\/ServiceRequests\/?(\?|$)/i.test(this.page.url())) return;
-    await expect(this.serviceRequestsLink).toBeVisible({ timeout: 15000 });
-    await this.serviceRequestsLink.click();
+    // Navigate directly rather than relying on a link click — avoids strict-mode
+    // violations when both a sidebar link and a breadcrumb link are present.
+    const linkVisible = await this.serviceRequestsLink.isVisible({ timeout: 5000 }).catch(() => false);
+    if (linkVisible) {
+      await this.serviceRequestsLink.click();
+    } else {
+      await this.page.goto('/ControlRoom/ServiceRequests', { waitUntil: 'domcontentloaded' });
+    }
     await this.page.waitForURL(/ServiceRequests/i, { timeout: 30000, waitUntil: 'domcontentloaded' });
   }
 
@@ -72,7 +80,11 @@ export class MyRequestsPage extends BasePage {
    * @param requireMultiReviewer  - Skip SRs with only one reviewer chip.
    * Both default to false, preserving existing behaviour for all other callers.
    */
-  async selectActiveRequest(requireSingleReviewer = false, requireMultiReviewer = false): Promise<void> {
+  async selectActiveRequest(
+    requireSingleReviewer = false,
+    requireMultiReviewer = false,
+    actionFn?: (href: string) => Promise<boolean>
+  ): Promise<void> {
     await this.navigateReloadAndScroll();
     const visited = new Set<string>();
 
@@ -95,23 +107,35 @@ export class MyRequestsPage extends BasePage {
           timeout: 30000, waitUntil: 'domcontentloaded',
         });
 
-        if (!requireSingleReviewer && !requireMultiReviewer) return true;
-
         const chipCount = await this.getReviewerCount();
-        if (requireSingleReviewer && chipCount === 1) {
-          console.log(`  ✅ Single-reviewer SR selected: ${href}`);
-          return true;
-        }
-        if (requireMultiReviewer && chipCount >= 2) {
-          console.log(`  ✅ Multi-reviewer SR (${chipCount} reviewers) selected: ${href}`);
-          return true;
+        let valid = false;
+
+        if (!requireSingleReviewer && !requireMultiReviewer) valid = true;
+        else if (requireSingleReviewer && chipCount === 1) valid = true;
+        else if (requireMultiReviewer && chipCount >= 2) valid = true;
+
+        if (!valid) {
+          const reason = requireSingleReviewer ? 'Multi-reviewer' : 'Single-reviewer';
+          console.log(`  ⏭ ${reason} SR skipped (${href}). Going back...`);
+          await this.page.goBack({ waitUntil: 'domcontentloaded' });
+          await this.waitForTableData();
+          return scanAndSelect();
         }
 
-        const reason = requireSingleReviewer ? 'Multi-reviewer' : 'Single-reviewer';
-        console.log(`  ⏭ ${reason} SR skipped (${href}). Going back...`);
-        await this.page.goBack({ waitUntil: 'domcontentloaded' });
-        await this.waitForTableData();
-        return scanAndSelect();
+        if (actionFn) {
+          const success = await actionFn(href);
+          if (success) {
+            console.log(`  ✅ Action successfully triggered in SR: ${href}`);
+            return true;
+          }
+          console.log(`  ⏭ Action declined in SR (${href}). Going back...`);
+          // actionFn may have navigated deep into activities; navigate back directly.
+          await this.navigateReloadAndScroll();
+          return scanAndSelect();
+        }
+
+        console.log(`  ✅ SR selected: ${href}`);
+        return true;
       }
 
       return false;
@@ -129,10 +153,10 @@ export class MyRequestsPage extends BasePage {
 
     throw new Error(
       requireSingleReviewer
-        ? 'No single-reviewer UNDER REVIEW service request found.'
+        ? 'No single-reviewer UNDER REVIEW service request found (or action predicate failed).'
         : requireMultiReviewer
-        ? 'No multi-reviewer UNDER REVIEW service request found.'
-        : 'No service requests found with status UNDER REVIEW.'
+          ? 'No multi-reviewer UNDER REVIEW service request found (or action predicate failed).'
+          : 'No service requests found with status UNDER REVIEW (or action predicate failed).'
     );
   }
 

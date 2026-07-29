@@ -41,10 +41,30 @@ Then('the Coordinator randomly assigns activity steps to reviewers', async ({ pa
     state.assignedReviewers = [reviewer2];
   } else {
     // Split: first 3 steps to reviewer 1, remaining to reviewer 2
-    console.log(`E2E Workflow (Different Reviewers): Assigning first 3 steps to ${reviewer1}, remaining to ${reviewer2}`);
-    await detailPage.assignReviewerToSteps(reviewer1, 3);
-    await detailPage.assignReviewerToSteps(reviewer2); // Assigns all remaining
-    state.assignedReviewers = [reviewer1, reviewer2];
+    const stepsForReviewer1 = 3;
+    const stepsForReviewer2 = pendingCount - stepsForReviewer1;
+
+    if (stepsForReviewer2 <= 0) {
+      // No steps left for reviewer 2 after assigning to reviewer 1 — use single-reviewer path.
+      console.log(`E2E Workflow (Same Reviewer — no steps remain for ${reviewer2}): Assigning all ${pendingCount} step(s) to ${reviewer1}`);
+      await detailPage.assignReviewerToSteps(reviewer1); // Assigns all
+      state.assignedReviewers = [reviewer1];
+    } else {
+      console.log(`E2E Workflow (Different Reviewers): Assigning first ${stepsForReviewer1} steps to ${reviewer1}, remaining ${stepsForReviewer2} to ${reviewer2}`);
+      await detailPage.assignReviewerToSteps(reviewer1, stepsForReviewer1);
+
+      // Re-count remaining after reviewer 1's assignment to guard against the SR
+      // rendering fewer buttons than expected (e.g. sequential-unlock workflows).
+      const remainingCount = await detailPage.getPendingStepCount();
+      if (remainingCount === 0) {
+        console.log(`  ℹ️ No steps remain after assigning ${stepsForReviewer1} to ${reviewer1} — skipping ${reviewer2}.`);
+        state.assignedReviewers = [reviewer1];
+      } else {
+        console.log(`  📋 ${remainingCount} step(s) remain — assigning to ${reviewer2}.`);
+        await detailPage.assignReviewerToSteps(reviewer2); // Assigns all remaining
+        state.assignedReviewers = [reviewer1, reviewer2];
+      }
+    }
   }
 });
 

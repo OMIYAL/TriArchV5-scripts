@@ -5,12 +5,9 @@ import { ServicesListingPage } from '../pages/storefront/services-listing.page';
 import { MyRequestsPage } from '../pages/storefront/my-requests.page';
 import { SRDetailPage } from '../pages/sr-detail.page';
 import { scrollFromTop } from '../utils/scroll.helper';
+import { getScenarioState } from '../utils/scenario-state';
 
 const { When, Then } = createBdd();
-
-let myRequestsPage: MyRequestsPage;
-let srDetailPage: SRDetailPage;
-let downloadedFiles: unknown[] = [];
 
 When('the citizen clicks on the Log in button', async ({ page }) => {
   const loginButton = page.getByRole('button', { name: /Log in/i });
@@ -46,44 +43,47 @@ When('the user navigates to the My Projects page clicks reload and scrolls', asy
 });
 
 When('the citizen clicks on the My Requests', async ({ page }) => {
-  myRequestsPage = new MyRequestsPage(page);
-  srDetailPage = new SRDetailPage(page);
+  const myRequestsPage = new MyRequestsPage(page);
   await myRequestsPage.navigateToMyRequests();
 });
 
-When('a list of requests appears', async () => {
-  await myRequestsPage.waitForListToLoad();
+When('a list of requests appears', async ({ page }) => {
+  await new MyRequestsPage(page).waitForListToLoad();
 });
 
-When('the citizen selects a closed status service request', async () => {
-  await myRequestsPage.selectClosedRequest();
+When('the citizen selects a closed status service request', async ({ page }) => {
+  await new MyRequestsPage(page).selectClosedRequest();
 });
 
-Then('the citizen should be redirected to that closed service request', async () => {
-  await srDetailPage.verifyRedirectedToClosedRequest();
+Then('the citizen should be redirected to that closed service request', async ({ page }) => {
+  await new SRDetailPage(page).verifyRedirectedToClosedRequest();
 });
 
-Then('the citizen selects view status history', async () => {
-  await srDetailPage.viewStatusHistory();
+Then('the citizen selects view status history', async ({ page }) => {
+  await new SRDetailPage(page).viewStatusHistory();
 });
 
-Then('the citizen selects Application form', async () => {
-  await srDetailPage.selectTab('Application form');
+Then('the citizen selects Application form', async ({ page }) => {
+  await new SRDetailPage(page).selectTab('Application form');
 });
 
-Then('the citizen selects Submission checklist', async () => {
-  await srDetailPage.selectTab('Submission checklist');
+Then('the citizen selects Submission checklist', async ({ page }) => {
+  await new SRDetailPage(page).selectTab('Submission checklist');
 });
 
-Then('the citizen selects Supporting documents', async () => {
-  await srDetailPage.selectTab('Supporting documents');
+Then('the citizen selects Supporting documents', async ({ page }) => {
+  await new SRDetailPage(page).selectTab('Supporting documents');
 });
 
-When('the citizen downloads all available documents', async () => {
-  downloadedFiles = await srDetailPage.downloadAllDocuments();
+When('the citizen downloads all available documents', async ({ page }) => {
+  const state = getScenarioState(page);
+  const files = await new SRDetailPage(page).downloadAllDocuments();
+  state.downloadedFiles = files;
 });
 
-Then('all documents should be downloaded successfully', async () => {
+Then('all documents should be downloaded successfully', async ({ page }) => {
+  const state = getScenarioState(page);
+  const downloadedFiles = state.downloadedFiles ?? [];
   expect(downloadedFiles.length).toBeGreaterThan(0);
   for (const download of downloadedFiles) {
     expect(download).not.toBeNull();
