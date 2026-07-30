@@ -48,11 +48,19 @@ anything: `suite: storefront` runs with what is already configured, while
 `Missing required config: …` until the portal secrets exist.
 
 Optional, unset by default: `TEST_DEFAULT_PDF` (defaults to
-`Human Trafficking Post - revised 070118.pdf`) and `TEST_DOCUMENTS_DIR`
-(defaults to `qa-automation/fixtures/documents`).
+`Human Trafficking Post - revised 070118.pdf`), `TEST_DOCUMENTS_DIR`
+(defaults to `qa-automation/fixtures/documents`) and `STRIPE_TEST_PHONE`
+(defaults to `2015550123`).
 
 > The target environment must be on **Stripe test keys**. The suite drives a
 > real Stripe Checkout form with the test card above.
+
+> Stripe renders the Link opt-in ("Save my information for faster checkout")
+> pre-checked for some sessions — notably on the US-IP GitHub runners, but not
+> usually from a local run. Checked, it makes *Phone number* required, so the
+> Pay click fails validation and the redirect back to the storefront never
+> happens. `StripeCheckoutPage.completePayment()` unchecks it when present, and
+> fills the phone from `STRIPE_TEST_PHONE` if it is still asked for.
 
 ---
 

@@ -109,6 +109,9 @@ jobs:
       STRIPE_TEST_ZIP: ${{ secrets.STRIPE_TEST_ZIP }}
       STRIPE_TEST_CARDHOLDER_NAME: ${{ secrets.STRIPE_TEST_CARDHOLDER_NAME }}
       STRIPE_TEST_EMAIL: ${{ secrets.STRIPE_TEST_EMAIL }}
+      # Optional. Only used if Stripe still asks for a phone number after the
+      # Link opt-in is declined; defaults to a test-mode number.
+      STRIPE_TEST_PHONE: ${{ secrets.STRIPE_TEST_PHONE || vars.STRIPE_TEST_PHONE }}
 
       # ---- Reporting
       PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/results.json
