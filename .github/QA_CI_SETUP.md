@@ -11,40 +11,45 @@ Everything is read from the environment, so nothing is committed. `dotenv` in
 `playwright.config.ts` never overrides variables that are already set, which is
 why the workflow can inject these directly without writing a `.env` file.
 
-Create a GitHub **Environment** named `staging`
-(*Settings → Environments → New environment*), then add:
+Each value is read as `secrets.X` first, falling back to `vars.X`, so it works
+whether you store it as a repository secret (the existing convention here) or as
+a plain variable. Storing the URLs as secrets means they are masked in the logs,
+which is worth keeping while the repository is public.
 
-### Variables (not secret) — *Settings → Environments → staging → Variables*
+### Already configured as repository secrets
 
-| Variable | Example | Required |
-|---|---|---|
-| `STOREFRONT_BASE_URL` | `https://storefront-staging.triarch.ai` | yes |
-| `PORTAL_BASE_URL` | `https://portal-staging.triarch.ai` | yes |
-| `AUTH_BASE_URL` | `https://auth-staging.triarch.ai` | yes |
-| `TENANT_NAME` | `fps` | yes |
-| `SERVICE_NAME` | `Fire Alarm Permit` | no — a random service is picked when unset |
-| `TEST_DEFAULT_PDF` | `Human Trafficking Post - revised 070118.pdf` | no — defaults to that file |
-| `TEST_DOCUMENTS_DIR` | *(leave unset)* | no — defaults to `qa-automation/fixtures/documents` |
+`STOREFRONT_BASE_URL` · `AUTH_BASE_URL` · `TENANT_NAME` · `SERVICE_NAME` ·
+`CITIZEN_USERNAME` · `CITIZEN_PASSWORD` · `STRIPE_TEST_CARD_NUMBER` ·
+`STRIPE_TEST_EXPIRATION` · `STRIPE_TEST_CVC` · `STRIPE_TEST_ZIP` ·
+`STRIPE_TEST_CARDHOLDER_NAME` · `STRIPE_TEST_EMAIL`
 
-### Secrets — *Settings → Environments → staging → Secrets*
+These cover every **storefront** scenario. Nothing to do.
+
+### Still missing — needed for control-room, e2e, smoke and all
 
 | Secret | Used by |
 |---|---|
-| `CITIZEN_USERNAME` / `CITIZEN_PASSWORD` | all storefront + e2e scenarios |
-| `COORDINATOR_USERNAME` / `COORDINATOR_PASSWORD` | coordinator assignment, e2e |
+| `PORTAL_BASE_URL` | every portal login (`utils/auth.helper.ts`) |
+| `COORDINATOR_USERNAME` / `COORDINATOR_PASSWORD` | coordinator assignment scenarios, e2e |
 | `REVIEWER_USERNAME` / `REVIEWER_PASSWORD` | single-reviewer control-room scenarios |
 | `REVIEWER1_USERNAME` / `REVIEWER1_PASSWORD` | dual-reviewer scenarios |
 | `REVIEWER2_USERNAME` / `REVIEWER2_PASSWORD` | dual-reviewer scenarios |
-| `STRIPE_TEST_CARD_NUMBER` | intake-fee payment step |
-| `STRIPE_TEST_EXPIRATION` | intake-fee payment step |
-| `STRIPE_TEST_CVC` | intake-fee payment step |
-| `STRIPE_TEST_ZIP` | intake-fee payment step |
-| `STRIPE_TEST_CARDHOLDER_NAME` | intake-fee payment step |
-| `STRIPE_TEST_EMAIL` | intake-fee payment step |
 
-Repository-level secrets/variables also work — environment values simply take
-precedence. The workflow fails fast with a clear `::error::` if any of the four
-URLs/tenant or the citizen credentials are missing.
+Add them under *Settings → Secrets and variables → Actions → New repository
+secret*, or:
+
+```bash
+gh secret set PORTAL_BASE_URL --repo OMIYAL/TriArchV5-scripts
+```
+
+The workflow checks only what the selected suite needs, before installing
+anything: `suite: storefront` runs with what is already configured, while
+`smoke` / `control-room` / `e2e` / `all` fail in seconds with an explicit
+`Missing required config: …` until the portal secrets exist.
+
+Optional, unset by default: `TEST_DEFAULT_PDF` (defaults to
+`Human Trafficking Post - revised 070118.pdf`) and `TEST_DOCUMENTS_DIR`
+(defaults to `qa-automation/fixtures/documents`).
 
 > The target environment must be on **Stripe test keys**. The suite drives a
 > real Stripe Checkout form with the test card above.

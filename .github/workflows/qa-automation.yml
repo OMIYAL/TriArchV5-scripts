@@ -75,16 +75,20 @@ jobs:
     env:
       CI: "true"
 
-      # ---- Environment under test (non-secret -> repository/environment vars)
-      STOREFRONT_BASE_URL: ${{ vars.STOREFRONT_BASE_URL }}
-      PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
-      AUTH_BASE_URL: ${{ vars.AUTH_BASE_URL }}
-      TENANT_NAME: ${{ vars.TENANT_NAME }}
+      # ---- Environment under test
+      # These are already configured as repository *secrets* (matching the
+      # older playwright.yml), so read the secret first and fall back to a
+      # repository/environment variable. Values stored as secrets are masked
+      # in the logs, which is what we want on a public repository.
+      STOREFRONT_BASE_URL: ${{ secrets.STOREFRONT_BASE_URL || vars.STOREFRONT_BASE_URL }}
+      PORTAL_BASE_URL: ${{ secrets.PORTAL_BASE_URL || vars.PORTAL_BASE_URL }}
+      AUTH_BASE_URL: ${{ secrets.AUTH_BASE_URL || vars.AUTH_BASE_URL }}
+      TENANT_NAME: ${{ secrets.TENANT_NAME || vars.TENANT_NAME }}
       # Optional: pin the service instead of picking a random one
-      SERVICE_NAME: ${{ vars.SERVICE_NAME }}
+      SERVICE_NAME: ${{ secrets.SERVICE_NAME || vars.SERVICE_NAME || 'Request SDTest1 Review' }}
       # Optional: overrides for fixtures/documents + default upload
       TEST_DOCUMENTS_DIR: ${{ vars.TEST_DOCUMENTS_DIR }}
-      TEST_DEFAULT_PDF: ${{ vars.TEST_DEFAULT_PDF }}
+      TEST_DEFAULT_PDF: ${{ secrets.TEST_DEFAULT_PDF || vars.TEST_DEFAULT_PDF }}
 
       # ---- Test accounts (secrets)
       CITIZEN_USERNAME: ${{ secrets.CITIZEN_USERNAME }}
@@ -113,26 +117,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Checked before the installs so a missing secret costs seconds, not minutes.
+      # Checked before the installs so a missing secret costs seconds, not
+      # minutes. Only the config the selected suite actually needs is enforced:
+      # the storefront scenarios never touch the portal.
       - name: Verify required configuration
+        env:
+          SUITE: ${{ inputs.suite || github.event.client_payload.suite || 'smoke' }}
         run: |
           missing=0
-          for v in STOREFRONT_BASE_URL PORTAL_BASE_URL AUTH_BASE_URL TENANT_NAME \
-                   CITIZEN_USERNAME CITIZEN_PASSWORD; do
+          need() { for v in "$@"; do
             if [ -z "${!v}" ]; then echo "::error::Missing required config: $v"; missing=1; fi
+          done; }
+          warn() { for v in "$@"; do
+            if [ -z "${!v}" ]; then echo "::warning::Not configured: $v"; fi
+          done; }
+
+          need STOREFRONT_BASE_URL AUTH_BASE_URL TENANT_NAME CITIZEN_USERNAME CITIZEN_PASSWORD
+
+          case "$SUITE" in
+            storefront|custom)
+              warn PORTAL_BASE_URL
+              ;;
+            *)
+              need PORTAL_BASE_URL COORDINATOR_USERNAME COORDINATOR_PASSWORD \
+                   REVIEWER_USERNAME REVIEWER_PASSWORD
+              # Only the dual-reviewer scenarios need these
+              warn REVIEWER1_USERNAME REVIEWER1_PASSWORD REVIEWER2_USERNAME REVIEWER2_PASSWORD
+              ;;
+          esac
+
+          echo "Configuration for suite '$SUITE':"
+          for v in STOREFRONT_BASE_URL PORTAL_BASE_URL AUTH_BASE_URL TENANT_NAME SERVICE_NAME \
+                   CITIZEN_USERNAME COORDINATOR_USERNAME REVIEWER_USERNAME \
+                   REVIEWER1_USERNAME REVIEWER2_USERNAME STRIPE_TEST_CARD_NUMBER; do
+            if [ -n "${!v}" ]; then echo "  $v = set"; else echo "  $v = (unset)"; fi
           done
+
           if [ "$missing" != "0" ]; then
             echo "::error::See .github/QA_CI_SETUP.md for the full list of variables and secrets."
             exit 1
           fi
-          echo "Storefront : $STOREFRONT_BASE_URL"
-          echo "Portal     : $PORTAL_BASE_URL"
-          echo "Auth       : $AUTH_BASE_URL"
-          echo "Tenant     : $TENANT_NAME"
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: qa-automation/package-lock.json
 
