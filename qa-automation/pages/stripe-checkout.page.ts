@@ -10,6 +10,8 @@ export class StripeCheckoutPage {
   private readonly cardholderNameInput: Locator;
   private readonly countrySelect: Locator;
   private readonly zipInput: Locator;
+  private readonly saveInfoCheckbox: Locator;
+  private readonly phoneInput: Locator;
   private readonly submitButton: Locator;
 
   constructor(page: Page) {
@@ -22,6 +24,8 @@ export class StripeCheckoutPage {
     this.cardholderNameInput = page.getByRole('textbox', { name: 'Cardholder name' });
     this.countrySelect = page.getByLabel('Country or region');
     this.zipInput = page.getByRole('textbox', { name: 'ZIP' });
+    this.saveInfoCheckbox = page.getByRole('checkbox', { name: /save my info/i }).first();
+    this.phoneInput = page.getByRole('textbox', { name: /phone/i }).first();
     this.submitButton = page.getByTestId('hosted-payment-submit-button');
   }
 
@@ -33,6 +37,30 @@ export class StripeCheckoutPage {
     await this.cardholderNameInput.fill((process.env.STRIPE_TEST_CARDHOLDER_NAME || ''));
     await this.countrySelect.selectOption('US');
     await this.zipInput.fill((process.env.STRIPE_TEST_ZIP || ''));
+    await this.declineLinkSignup();
     await this.submitButton.click();
+  }
+
+  // Stripe sometimes renders the Link opt-in ("Save my information for faster
+  // checkout") pre-checked, which reveals a *required* Phone number field.
+  // Left empty, the Pay click fails client-side validation and never redirects.
+  // Whether the opt-in shows up at all depends on the session/region, hence the
+  // visibility guard: it appears on the US-IP CI runners but not always locally.
+  private async declineLinkSignup(): Promise<void> {
+    const optInVisible = await this.saveInfoCheckbox
+      .waitFor({ state: 'visible', timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (optInVisible && await this.saveInfoCheckbox.isChecked()) {
+      await this.saveInfoCheckbox.uncheck();
+    }
+
+    // Belt and braces: some variants keep asking for a phone number even with
+    // the opt-in off. Fill it rather than fail — Stripe test mode accepts any
+    // well-formed number.
+    if (await this.phoneInput.isVisible().catch(() => false)) {
+      await this.phoneInput.fill((process.env.STRIPE_TEST_PHONE || '2015550123'));
+    }
   }
 }
