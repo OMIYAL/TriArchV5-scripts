@@ -1,0 +1,267 @@
+name: QA Automation (Playwright BDD)
+
+# ---------------------------------------------------------------------------
+# Runs the Gherkin/Playwright suite in qa-automation/ against a deployed
+# environment and publishes a scenario-by-scenario outcome report.
+#
+# Three ways to start a run:
+#   1. Actions tab -> "QA Automation (Playwright BDD)" -> Run workflow
+#   2. Nightly schedule (see `schedule` below)
+#   3. repository_dispatch from another repo (e.g. TriArchV5 after a deploy):
+#        gh api repos/OMIYAL/TriArchV5-scripts/dispatches \
+#          -f event_type=qa-run -F client_payload[suite]=smoke
+#
+# Required configuration -> see .github/QA_CI_SETUP.md
+# ---------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Which scenarios to run"
+        type: choice
+        default: smoke
+        options:
+          - smoke          # every project, only @smoke scenarios
+          - storefront     # storefront-chromium project
+          - control-room   # portal-auth-setup project (control-room features)
+          - e2e            # e2e-full-flow project (grand workflow)
+          - all            # every project, every scenario
+          - custom         # use the `grep` input below
+      grep:
+        description: "Extra tag/title filter, e.g. '@status|@contact' (required when suite=custom)"
+        type: string
+        default: ""
+      retries:
+        description: "Retries per failing scenario"
+        type: choice
+        default: "1"
+        options: ["0", "1", "2"]
+      headed:
+        description: "Run headed under Xvfb (matches how the suite was authored)"
+        type: boolean
+        default: true
+      environment:
+        description: "GitHub Environment holding the URLs/credentials"
+        type: string
+        default: staging
+
+  repository_dispatch:
+    types: [qa-run]
+
+  schedule:
+    # 20:30 UTC = 02:00 IST daily
+    - cron: "30 20 * * *"
+
+# The suite picks up whatever Service Request happens to be UNDER REVIEW on the
+# target tenant, so two runs must never overlap on the same environment.
+concurrency:
+  group: qa-automation-${{ inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ inputs.suite || github.event.client_payload.suite || 'smoke' }} @ ${{ inputs.environment || 'staging' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment: ${{ inputs.environment || 'staging' }}
+    defaults:
+      run:
+        working-directory: qa-automation
+
+    env:
+      CI: "true"
+
+      # ---- Environment under test (non-secret -> repository/environment vars)
+      STOREFRONT_BASE_URL: ${{ vars.STOREFRONT_BASE_URL }}
+      PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+      AUTH_BASE_URL: ${{ vars.AUTH_BASE_URL }}
+      TENANT_NAME: ${{ vars.TENANT_NAME }}
+      # Optional: pin the service instead of picking a random one
+      SERVICE_NAME: ${{ vars.SERVICE_NAME }}
+      # Optional: overrides for fixtures/documents + default upload
+      TEST_DOCUMENTS_DIR: ${{ vars.TEST_DOCUMENTS_DIR }}
+      TEST_DEFAULT_PDF: ${{ vars.TEST_DEFAULT_PDF }}
+
+      # ---- Test accounts (secrets)
+      CITIZEN_USERNAME: ${{ secrets.CITIZEN_USERNAME }}
+      CITIZEN_PASSWORD: ${{ secrets.CITIZEN_PASSWORD }}
+      COORDINATOR_USERNAME: ${{ secrets.COORDINATOR_USERNAME }}
+      COORDINATOR_PASSWORD: ${{ secrets.COORDINATOR_PASSWORD }}
+      REVIEWER_USERNAME: ${{ secrets.REVIEWER_USERNAME }}
+      REVIEWER_PASSWORD: ${{ secrets.REVIEWER_PASSWORD }}
+      REVIEWER1_USERNAME: ${{ secrets.REVIEWER1_USERNAME }}
+      REVIEWER1_PASSWORD: ${{ secrets.REVIEWER1_PASSWORD }}
+      REVIEWER2_USERNAME: ${{ secrets.REVIEWER2_USERNAME }}
+      REVIEWER2_PASSWORD: ${{ secrets.REVIEWER2_PASSWORD }}
+
+      # ---- Stripe test-mode card used at the intake-fee step
+      STRIPE_TEST_CARD_NUMBER: ${{ secrets.STRIPE_TEST_CARD_NUMBER }}
+      STRIPE_TEST_EXPIRATION: ${{ secrets.STRIPE_TEST_EXPIRATION }}
+      STRIPE_TEST_CVC: ${{ secrets.STRIPE_TEST_CVC }}
+      STRIPE_TEST_ZIP: ${{ secrets.STRIPE_TEST_ZIP }}
+      STRIPE_TEST_CARDHOLDER_NAME: ${{ secrets.STRIPE_TEST_CARDHOLDER_NAME }}
+      STRIPE_TEST_EMAIL: ${{ secrets.STRIPE_TEST_EMAIL }}
+
+      # ---- Reporting
+      PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/results.json
+      PLAYWRIGHT_HTML_OPEN: never
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Checked before the installs so a missing secret costs seconds, not minutes.
+      - name: Verify required configuration
+        run: |
+          missing=0
+          for v in STOREFRONT_BASE_URL PORTAL_BASE_URL AUTH_BASE_URL TENANT_NAME \
+                   CITIZEN_USERNAME CITIZEN_PASSWORD; do
+            if [ -z "${!v}" ]; then echo "::error::Missing required config: $v"; missing=1; fi
+          done
+          if [ "$missing" != "0" ]; then
+            echo "::error::See .github/QA_CI_SETUP.md for the full list of variables and secrets."
+            exit 1
+          fi
+          echo "Storefront : $STOREFRONT_BASE_URL"
+          echo "Portal     : $PORTAL_BASE_URL"
+          echo "Auth       : $AUTH_BASE_URL"
+          echo "Tenant     : $TENANT_NAME"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: qa-automation/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      # Browser binaries come from the cache above; --with-deps re-checks the
+      # OS libraries every run (idempotent) so a cache hit can't leave the
+      # runner missing a shared library.
+      - name: Install Chromium
+        run: |
+          npx playwright install --with-deps chromium
+          command -v xvfb-run >/dev/null || { sudo apt-get update && sudo apt-get install -y xvfb; }
+
+      - name: Generate BDD specs from .feature files
+        run: npx bddgen
+
+      # The suite is authored for a maximised window (playwright.config.ts sets
+      # `viewport: null` + `--start-maximized`), so run it headed inside Xvfb.
+      - name: Run scenarios
+        id: run
+        continue-on-error: true
+        # Passed through `env` rather than interpolated into the script: `grep`
+        # is free-text input and must never be evaluated as shell.
+        env:
+          SUITE: ${{ inputs.suite || github.event.client_payload.suite || 'smoke' }}
+          GREP: ${{ inputs.grep || github.event.client_payload.grep || '' }}
+          RETRIES: ${{ inputs.retries || github.event.client_payload.retries || '1' }}
+          # Empty (schedule / repository_dispatch) means headed, matching the
+          # local default; only an explicit `false` opts into headless.
+          HEADED: ${{ inputs.headed }}
+        run: |
+          case "$RETRIES" in 0|1|2) ;; *) echo "::error::retries must be 0, 1 or 2"; exit 1 ;; esac
+
+          ARGS=()
+          case "$SUITE" in
+            smoke)        ARGS+=(--grep "@smoke") ;;
+            storefront)   ARGS+=(--project=storefront-chromium) ;;
+            control-room) ARGS+=(--project=portal-auth-setup) ;;
+            e2e)          ARGS+=(--project=e2e-full-flow) ;;
+            all)          : ;;
+            custom)
+              if [ -z "$GREP" ]; then echo "::error::suite=custom requires the grep input"; exit 1; fi
+              ;;
+            *) echo "::error::Unknown suite '$SUITE'"; exit 1 ;;
+          esac
+          if [ -n "$GREP" ] && [ "$SUITE" != "smoke" ] && [ "$SUITE" != "custom" ]; then
+            ARGS+=(--grep "$GREP")
+          fi
+          if [ "$SUITE" = "custom" ]; then ARGS+=(--grep "$GREP"); fi
+
+          echo "suite=$SUITE" >> "$GITHUB_OUTPUT"
+          echo "Running: playwright test ${ARGS[*]} --retries=$RETRIES"
+
+          set +e
+          if [ "$HEADED" = "false" ]; then
+            npx playwright test "${ARGS[@]}" --retries="$RETRIES" \
+              --reporter=list,html,json
+          else
+            xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+              npx playwright test "${ARGS[@]}" --retries="$RETRIES" --headed \
+              --reporter=list,html,json
+          fi
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Build scenario outcome report
+        if: always()
+        id: report
+        env:
+          SUITE: ${{ steps.run.outputs.suite }}
+          TARGET_ENV: ${{ inputs.environment || 'staging' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          node scripts/summarize-results.js \
+            --input test-results/results.json \
+            --out report \
+            --suite "$SUITE" \
+            --env "$TARGET_ENV" \
+            --run-url "$RUN_URL"
+          cat report/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload scenario report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            qa-automation/report/
+            qa-automation/test-results/results.json
+          retention-days: 30
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-html-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qa-automation/playwright-report/
+          retention-days: 30
+
+      # Traces/videos/screenshots capture live tenant data. Keep the retention
+      # short, and see the warning in .github/QA_CI_SETUP.md about public repos.
+      - name: Upload failure traces and videos
+        if: always() && steps.run.outputs.exit_code != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            qa-automation/test-results/**/*.zip
+            qa-automation/test-results/**/*.webm
+            qa-automation/test-results/**/*.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Fail the job if any scenario failed
+        if: always()
+        env:
+          HEADLINE: ${{ steps.report.outputs.headline }}
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+        run: |
+          echo "$HEADLINE"
+          [ "$EXIT_CODE" = "0" ] || exit 1

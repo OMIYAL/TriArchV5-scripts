@@ -59,3 +59,7 @@ desktop.ini
 .idea/
 *.suo
 *.user
+
+# ─── CI: generated scenario report ───────────────────────────
+report/
+cucumber-report/
