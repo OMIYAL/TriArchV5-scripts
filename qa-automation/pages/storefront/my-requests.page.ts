@@ -49,6 +49,115 @@ export class MyRequestsPage extends BasePage {
     return waitForFilteredTableData(this.page);
   }
 
+  /**
+   * Expands the DataTable page size to `size` entries (default 50) using the
+   * custom `.ta-length-menu` component visible in the table footer.
+   *
+   * Flow (confirmed from DevTools):
+   *  1. Scroll the footer into view so the control is reachable.
+   *  2. Read the button text — skip if the desired size is already active.
+   *  3. Click `.ta-length-menu__btn` to open the dropdown.
+   *  4. Wait for the menu container to receive the `.is-open` class.
+   *  5. Click the matching `.ta-length-menu__option` (exact text match).
+   *  6. Wait for the DataTable "Processing…" cycle to finish.
+   *
+   * Called inside scanAndSelect() so it runs on every scan pass — including
+   * after goBack() + recursive scanAndSelect() calls which reset pagination.
+   *
+   * @param size - One of the four sizes the app supports: 25 | 50 | 100 (default 50).
+   */
+  private async setTablePageSize(size: 25 | 50 | 100 = 50): Promise<void> {
+    // 1. Scroll to the table footer where the page-size control lives.
+    const footer = this.page.locator('.dataTables_footer').first();
+    if (await footer.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await footer.scrollIntoViewIfNeeded();
+    }
+
+    const menuBtn = this.page.locator('.ta-length-menu__btn').first();
+    if (!await menuBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      console.log('setTablePageSize: .ta-length-menu__btn not visible — skipping.');
+      return;
+    }
+
+    // 2. Skip if already at the desired size.
+    const currentSize = (await menuBtn.textContent().catch(() => ''))?.trim();
+    if (currentSize === String(size)) {
+      return; // already correct — no click needed
+    }
+
+    console.log(`setTablePageSize: ${currentSize ?? '?'} → ${size} entries per page...`);
+
+    // 3. Open the dropdown.
+    await menuBtn.click();
+
+    // 4. Wait for the menu container to receive .is-open
+    //    (Bootstrap-style open signal — same pattern as the verdict drawer's .show class).
+    await this.page
+      .waitForFunction(
+        () => !!document.querySelector('.ta-length-menu.is-open'),
+        { timeout: 5000 },
+      )
+      .catch(() => {
+        console.warn('setTablePageSize: .ta-length-menu.is-open not detected within 5s — attempting option click anyway.');
+      });
+
+    // 5. Click the matching option (exact text match — "50" must not match "100").
+    const option = this.page
+      .locator('.ta-length-menu__option')
+      .filter({ hasText: new RegExp(`^${size}$`) })
+      .first();
+    await option.click();
+
+    // 6. Wait in two stages:
+    //    Stage A — waitForTableData() clears the Processing... overlay.
+    //    Stage B — waitForFunction on menu-btn text + first row: confirms the DataTable
+    //              committed the new page size (menu button shows "50").
+    //    Stage C — waitForFunction on row count > default (10): the DataTable paints rows
+    //              progressively; the menu-btn check fires after the FIRST row is painted
+    //              but before the other 49 are ready. Waiting until count > 10 confirms
+    //              the full expanded row set is actually in the DOM before the caller
+    //              reads `count = await rows.count()`.
+    await this.waitForTableData();
+    const sizeStr = String(size);
+    await this.page
+      .waitForFunction(
+        (expectedSize) => {
+          const btn = document.querySelector('.ta-length-menu__btn');
+          return btn?.textContent?.trim() === expectedSize && document.querySelector('tbody tr') !== null;
+        },
+        sizeStr,
+        { timeout: 10000 },
+      )
+      .catch(() => {
+        console.warn(`setTablePageSize: menu button did not show "${size}" within 10s — table may still be loading.`);
+      });
+
+    // Stage C: wait for more than the default 10 rows to be in the DOM.
+    // This is the definitive signal that the DataTable has finished painting the
+    // expanded row set — not just that the first row exists.
+    const defaultPageSize = 10;
+    const finalCount = await this.page
+      .waitForFunction(
+        (minRows) => {
+          const rows = document.querySelectorAll('tbody tr');
+          return rows.length > minRows ? rows.length : false;
+        },
+        defaultPageSize,
+        { timeout: 15000 },
+      )
+      .then(r => r.valueOf())
+      .catch(() => {
+        // Soft catch: the filtered view may genuinely have ≤ 10 rows (e.g. only 4
+        // Under Review SRs exist). Log and proceed — the caller's count refresh will
+        // read whatever rows are actually present.
+        console.warn(`setTablePageSize: row count did not exceed ${defaultPageSize} within 15s — table may have fewer entries than requested.`);
+        return null;
+      });
+
+    console.log(`setTablePageSize: now showing up to ${size} entries per page. ${finalCount ? `Actual count: ${finalCount}` : ''}`);
+  }
+
+
   /** Navigates to Service Requests, reloads the table, and scrolls the page. */
   async navigateReloadAndScroll(): Promise<void> {
     await this.navigateToMyRequests();
@@ -87,10 +196,28 @@ export class MyRequestsPage extends BasePage {
   ): Promise<void> {
     await this.navigateReloadAndScroll();
     const visited = new Set<string>();
+    // Tracks whether the "Under Review" filter pill has been applied.
+    // setTablePageSize(50) runs:
+    //  (a) at the top of scanAndSelect() on the very first filtered scan pass, and
+    //  (b) inside the loop after every goBack() that resets the DataTable to 10 rows.
+    // Using i=-1;continue to restart the loop does NOT re-execute the code before the
+    // for-statement, so the in-loop call is the only reliable re-application point.
+    let underReviewFilterActive = false;
 
     const scanAndSelect = async (): Promise<boolean> => {
+      // First-pass expansion: runs once when scanAndSelect() is first called after
+      // the Under Review filter is applied. Subsequent re-expansions happen inside
+      // the loop immediately after each goBack() — see inline comments below.
+      if (underReviewFilterActive) {
+        await this.setTablePageSize(50);
+      }
+
       const rows = this.page.locator('tbody tr');
-      const count = await rows.count();
+      // `count` must be `let` so it can be refreshed after setTablePageSize expands
+      // the table. `rows` is a live Locator (re-queried per .nth(i) call), but `count`
+      // is a snapshot — without a refresh, the loop would iterate only the original
+      // row count even after the DataTable expanded to 50 entries.
+      let count = await rows.count();
 
       for (let i = 0; i < count; i++) {
         const row = rows.nth(i);
@@ -99,6 +226,8 @@ export class MyRequestsPage extends BasePage {
 
         const link = row.getByRole('link').first();
         const href = await link.getAttribute('href').catch(() => null);
+        // `visited` guards against re-selecting any SR the scanner already opened
+        // (including ones where chip-check or actionFn caused a goBack and restart).
         if (!href || visited.has(href) || !await link.isVisible().catch(() => false)) continue;
 
         visited.add(href);
@@ -119,7 +248,18 @@ export class MyRequestsPage extends BasePage {
           console.log(`  ⏭ ${reason} SR skipped (${href}). Going back...`);
           await this.page.goBack({ waitUntil: 'domcontentloaded' });
           await this.waitForTableData();
-          return scanAndSelect();
+          // Re-expand to 50 rows if the Under Review filter is active.
+          // goBack() resets DataTable pagination to 10 rows. The setTablePageSize(50)
+          // call at the top of scanAndSelect() does NOT re-run when i=-1;continue
+          // restarts the for-loop — it only executes before the loop starts. So this
+          // in-loop call is the only reliable re-application point after each goBack().
+          if (underReviewFilterActive) {
+            await this.setTablePageSize(50);
+          }
+          // Refresh count after page-size change so the loop iterates all visible rows.
+          count = await rows.count();
+          i = -1;
+          continue;
         }
 
         if (actionFn) {
@@ -131,7 +271,21 @@ export class MyRequestsPage extends BasePage {
           console.log(`  ⏭ Action declined in SR (${href}). Going back...`);
           // actionFn may have navigated deep into activities; navigate back directly.
           await this.navigateReloadAndScroll();
-          return scanAndSelect();
+          // Re-apply the Under Review filter + page size if active.
+          // navigateReloadAndScroll() loads fresh with no filter/page-size state.
+          if (underReviewFilterActive) {
+            const pill = this.page.getByRole('button', { name: 'Under Review', exact: true }).first();
+            if (await pill.isVisible({ timeout: 5000 }).catch(() => false)) {
+              await pill.click();
+              await this.waitForFilteredTableData();
+            }
+            // Expand after filter is active (waitForFilteredTableData does not expand).
+            await this.setTablePageSize(50);
+          }
+          // Refresh count after any page-size change and restart scan.
+          count = await rows.count();
+          i = -1;
+          continue;
         }
 
         console.log(`  ✅ SR selected: ${href}`);
@@ -148,6 +302,7 @@ export class MyRequestsPage extends BasePage {
     if (await filterPill.isVisible({ timeout: 5000 }).catch(() => false)) {
       await filterPill.click();
       await this.waitForFilteredTableData();
+      underReviewFilterActive = true; // flag scanAndSelect() to re-expand on every pass from here
       if (await scanAndSelect()) return;
     }
 
@@ -211,8 +366,7 @@ export class MyRequestsPage extends BasePage {
       });
       await this.waitForLoaders();
       await this.page.locator('#ActivityVerdictButton')
-        .waitFor({ state: 'visible', timeout: 30000 })
-        .catch(() => { console.log('Warning: #ActivityVerdictButton not visible after opening activity.'); });
+        .waitFor({ state: 'visible', timeout: 30000 });
       return true;
     }
 
@@ -228,6 +382,12 @@ export class MyRequestsPage extends BasePage {
     await this.waitForLoaders();
 
     const tryFindTrackingNumberInRows = async (): Promise<boolean> => {
+      // Wait for the DataTable to finish its initial data load before touching the
+      // search input. waitForLoaders() clears page-level spinners but the DataTable
+      // initialises its search event listener asynchronously — filling before it's
+      // bound is silently ignored (the table stays unfiltered, the row never appears).
+      await this.waitForTableData();
+
       const searchInput = this.page.locator(
         'input[type="search"], input[placeholder*="search" i], input[placeholder*="filter" i]'
       ).first();

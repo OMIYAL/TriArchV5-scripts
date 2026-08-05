@@ -3,6 +3,7 @@ import { expect, type Page } from '@playwright/test';
 import { ActivityRevisionPage } from '../pages/control-room/activity-revision.page';
 import { MyRequestsPage } from '../pages/storefront/my-requests.page';
 import { getScenarioState } from '../utils/scenario-state';
+import { waitForTableData, waitForFilteredTableData } from '../utils/table.helper';
 
 const { When, Then } = createBdd();
 
@@ -35,11 +36,29 @@ When(
 
     console.log(`Reviewer searching for SR: ${state.trackingNumber} (expected status: ${status})`);
 
-    // Search via the Control Room SR list search box.
-    const searchInput = page.locator('input[type="search"], input[placeholder*="Search"], input[placeholder*="Tracking"]').first();
+    // Navigate to the SR list and wait for the DataTable to fully initialise before
+    // touching the search input. The input element is present in the server-rendered HTML
+    // (isVisible() passes immediately), but the DataTable's event listener is attached
+    // asynchronously — filling the input before the listener is bound is silently ignored.
+    if (!/ServiceRequests/i.test(page.url())) {
+      await page.goto('/ControlRoom/ServiceRequests', { waitUntil: 'domcontentloaded' });
+    }
+
+    // Wait for the DataTable's initial data load to complete (Processing... cycle).
+    // This is the definitive signal that the DataTable has fully initialised its
+    // event listeners and is ready to process search input.
+    await waitForTableData(page);
+
+    // Now fill the search input and press Enter.
+    const searchInput = page.locator('input[type="search"], input[placeholder*="Search" i], input[placeholder*="Tracking" i]').first();
     if (await searchInput.isVisible({ timeout: 5000 }).catch(() => false)) {
       await searchInput.fill(state.trackingNumber);
       await searchInput.press('Enter');
+
+      // Wait for the DataTable to process the search and repaint its rows.
+      // This is the definitive confirmation that the filter took effect — not just
+      // that we typed into the box.
+      await waitForFilteredTableData(page);
     }
 
     // Wait for and click the row matching the tracking number.
