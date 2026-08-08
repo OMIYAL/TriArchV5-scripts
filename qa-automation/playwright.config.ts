@@ -1,9 +1,7 @@
+import './utils/env.config'; // MUST be first — resolves & injects env vars before anything else reads process.env
 import { defineConfig } from '@playwright/test';
 import { defineBddConfig } from 'playwright-bdd';
-import * as dotenv from 'dotenv';
 import path from 'path';
-
-dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const testDir = defineBddConfig({
   features: 'features/**/*.feature',
