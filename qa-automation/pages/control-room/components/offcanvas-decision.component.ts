@@ -40,7 +40,31 @@ export class OffcanvasDecisionComponent extends BasePage {
    * retry with a real click rather than bypassing the browser's event dispatch entirely.
    */
   private async openDecisionDrawer(): Promise<void> {
-    if (await this.drawer.isVisible({ timeout: 2000 }).catch(() => false)) return;
+    // FIX (CI double-open race): check for Bootstrap's `.show` class to determine
+    // whether the drawer is already open before deciding to re-click the button.
+    //
+    // Why only `.show` (not `aria-hidden`):
+    //  • Diagnostic logging confirmed that this app sets `aria-hidden="true"` on
+    //    `#activity-verdict-drawer` PERMANENTLY — it is present whether the drawer
+    //    is open, closing, or closed. Checking `aria-hidden !== 'true'` would
+    //    always evaluate to false, making `alreadyOpen` always false and causing
+    //    an unnecessary (and potentially harmful) re-click on every call.
+    //  • `.show` is added by Bootstrap only after the open animation completes
+    //    and removed at the START of the close sequence — making it the correct,
+    //    reliable open-state signal for this app.
+    //  • `isVisible` alone (the original check) returned true mid-open-animation
+    //    in CI/Xvfb, causing openDecisionDrawer() to return early before the
+    //    drawer was interactable, leading to radio selections mid-animation and
+    //    Bootstrap dismissing the offcanvas (treating the click as outside), then
+    //    submitDecision() reopening the drawer and resetting the radio to Approve.
+    const alreadyOpen = await this.page.evaluate(() => {
+      const el = document.querySelector('#activity-verdict-drawer');
+      return !!(el && el.classList.contains('show'));
+    }).catch(() => false);
+    if (alreadyOpen) {
+      console.log('Decision drawer already open (.show detected) — skipping re-open.');
+      return;
+    }
 
     const verdictBtn = this.page.locator('#ActivityVerdictButton');
     const fallbackBtn = this.page.locator('.ta-acthdr__submit-btn, button:has-text("Submit Decision")')
@@ -55,7 +79,10 @@ export class OffcanvasDecisionComponent extends BasePage {
 
     if (!btnToClick) {
       console.log('No Submit Decision button found. Waiting up to 30s for drawer...');
-      await this.drawer.waitFor({ state: 'visible', timeout: 30000 });
+      await this.page.waitForFunction(
+        () => !!document.querySelector('#activity-verdict-drawer.show'),
+        { timeout: 30000 }
+      );
       return;
     }
 
@@ -87,8 +114,13 @@ export class OffcanvasDecisionComponent extends BasePage {
     // Sticky lpx toolbar / content toolbar intercepts normal clicks on Fee and similar steps.
     await btnToClick.click({ force: true });
 
-    let opened = await this.drawer
-      .waitFor({ state: 'visible', timeout: 10000 })
+    // Wait for the Bootstrap `.show` class (animation complete), not just Playwright `isVisible`.
+    // This prevents callers that pre-selected a radio from racing with a still-animating drawer.
+    let opened = await this.page
+      .waitForFunction(
+        () => !!document.querySelector('#activity-verdict-drawer.show'),
+        { timeout: 10000 }
+      )
       .then(() => true)
       .catch(() => false);
 
@@ -119,8 +151,11 @@ export class OffcanvasDecisionComponent extends BasePage {
       }
 
       await btnToClick.click({ timeout: 5000 });
-      opened = await this.drawer
-        .waitFor({ state: 'visible', timeout: 15000 })
+      opened = await this.page
+        .waitForFunction(
+          () => !!document.querySelector('#activity-verdict-drawer.show'),
+          { timeout: 15000 }
+        )
         .then(() => true)
         .catch(() => false);
     }
@@ -143,8 +178,7 @@ export class OffcanvasDecisionComponent extends BasePage {
     // Wait for the decision options to load and render inside the drawer body
     await this.decisionBody.locator('input[name="VerdictOutcome"], .js-decision-option, label, button, .card')
       .first()
-      .waitFor({ state: 'attached', timeout: 15000 })
-      .catch(() => { console.log('Warning: Decision options did not render within 15s.'); });
+      .waitFor({ state: 'attached', timeout: 15000 });
 
     // If the drawer still shows uncleared-section blockers, close it, clear again, and reopen once.
     // Issuance can show "Mark All Sections Reviewed" even when auto-criteria (e.g. Report missing)
@@ -218,11 +252,11 @@ export class OffcanvasDecisionComponent extends BasePage {
     }
 
     // Ensure a radio is actually selected before confirming/submitting.
-    await this.drawer.locator('input[name="VerdictOutcome"]:checked')
-      .waitFor({ state: 'attached', timeout: 5000 })
-      .catch(() => {
-        throw new Error('A verdict option was clicked but no VerdictOutcome radio is checked.');
-      });
+    // Using expect() gives a proper locator snapshot in the failure output — more
+    // actionable than a plain Error string from a .catch(rethrow) pattern.
+    await expect(
+      this.drawer.locator('input[name="VerdictOutcome"]:checked'),
+    ).toBeAttached({ timeout: 5000 });
 
     // Pause / On Hold requires a reason when that group is shown.
     const onHoldReason = this.drawer.locator('#Input_OnHoldReason');

@@ -5,6 +5,7 @@ Feature: Dual-reviewer workflow where two reviewers split the activity steps
   So that each reviewer processes only their assigned steps
   Reviewer 1 handles the first 3 activity steps and Reviewer 2 completes the rest
 
+  @control-room @smoke
   Scenario: Two reviewers collaboratively process a Service Request
     Given that the Reviewer is on the Landing page of the portal
     And Reviewer 1 logs in with Reviewer 1 credentials

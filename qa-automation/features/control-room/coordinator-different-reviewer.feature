@@ -5,6 +5,7 @@ Feature: Coordinator splits activity steps between two different reviewers
   And the remaining steps to a second reviewer
   So that the workload is distributed and each reviewer handles only their assigned steps
 
+  @control-room @smoke
   Scenario: Coordinator assigns first 3 steps to one reviewer and the rest to another
     Given the Coordinator is logged in to the portal
     When the Coordinator opens a Pending Intake Service Request

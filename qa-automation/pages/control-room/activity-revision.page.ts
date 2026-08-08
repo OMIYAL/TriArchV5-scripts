@@ -1,8 +1,7 @@
-import { Page, expect } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 import { ActivityReviewPage } from './activity-review.page';
 import { MyRequestsPage } from '../storefront/my-requests.page';
 import { faker } from '@faker-js/faker';
-import { waitForTableData, waitForFilteredTableData } from '../../utils/table.helper';
 import { getScenarioState } from '../../utils/scenario-state';
 
 export class ActivityRevisionPage extends ActivityReviewPage {
@@ -35,6 +34,51 @@ export class ActivityRevisionPage extends ActivityReviewPage {
       return 'done';
     }
     return 'not-found';
+  }
+
+  // ─── Shared drawer-open helper ────────────────────────────────────────────
+
+  /**
+   * Opens `#activity-verdict-drawer` using the two-phase approach and returns
+   * the drawer Locator so callers can immediately select a radio.
+   *
+   * Two-phase open (required for CI stability):
+   *  1. Click `#ActivityVerdictButton` to trigger the Bootstrap open animation.
+   *  2. `waitForFunction` on `.show` class — the animation-complete signal.
+   *     Using `.show` (not Playwright `isVisible`) prevents callers from
+   *     interacting with a still-animating drawer, which causes Bootstrap to
+   *     treat the click as an outside-click and dismiss the offcanvas, then
+   *     `submitDecision()` reopens it and resets the radio to the server default
+   *     (Approve) — the root cause of the original CI wrong-verdict bug.
+   *  3. Falls back to `waitFor({state:'visible'})` with a loud warning if `.show`
+   *     is not detected within 8 s — slow CI environments still proceed, but the
+   *     warning is visible in logs so the flake is never silent.
+   *
+   * @param context - Short label for warning messages: 'revision' | 'rejection' |
+   *                  'rai' | 'conditional'.
+   * @returns The `#activity-verdict-drawer` Locator (already open).
+   */
+  private async openVerdictDrawerForPreSelection(context: string): Promise<Locator> {
+    const drawer = this.page.locator('#activity-verdict-drawer');
+    const verdictBtn = this.page.locator('#ActivityVerdictButton');
+    if (await verdictBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await verdictBtn.click();
+      const showReady = await this.page
+        .waitForFunction(
+          () => !!document.querySelector('#activity-verdict-drawer.show'),
+          { timeout: 8000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!showReady) {
+        console.warn(
+          `[openDrawer/${context}] #activity-verdict-drawer.show not detected within 8s `
+          + '— falling back to isVisible. If radio resets, increase timeout or check CI perf.',
+        );
+        await drawer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+      }
+    }
+    return drawer;
   }
 
   // ─── Revision flow ────────────────────────────────────────────────────────
@@ -87,13 +131,9 @@ export class ActivityRevisionPage extends ActivityReviewPage {
       myRequestsPage,
       maxSteps,
       async () => {
-        // 1. Open verdict drawer if not already open.
-        const drawer = this.page.locator('#activity-verdict-drawer');
-        const verdictBtn = this.page.locator('#ActivityVerdictButton');
-        if (await verdictBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await verdictBtn.click();
-          await drawer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-        }
+        // 1. Open verdict drawer — two-phase (click + waitForFunction on .show).
+        //    Rationale in openVerdictDrawerForPreSelection().
+        const drawer = await this.openVerdictDrawerForPreSelection('revision');
 
         // 2. Select "Needs revision" via its stable data-decision attribute — NOT label text.
         //    Finding 1: label-text `.isVisible().catch(() => false)` with no `else` meant a
@@ -169,15 +209,9 @@ export class ActivityRevisionPage extends ActivityReviewPage {
       async () => {
         console.log('Document review step detected. Triggering Rejection flow...');
 
-        // 1. Open verdict drawer explicitly — same pattern as revision flow.
-        //    submitDecision's generic getByText fallback can silently approve
-        //    when 'Reject' text isn't matched, so we pre-select here instead.
-        const drawer = this.page.locator('#activity-verdict-drawer');
-        const verdictBtn = this.page.locator('#ActivityVerdictButton');
-        if (await verdictBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await verdictBtn.click();
-          await drawer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-        }
+        // 1. Open verdict drawer — two-phase (click + waitForFunction on .show).
+        //    Rationale in openVerdictDrawerForPreSelection().
+        const drawer = await this.openVerdictDrawerForPreSelection('rejection');
 
         // 2. Select 'Reject' via its stable data-decision attribute — NOT label text.
         //    Same Finding 1 reasoning as the revision path above.
@@ -303,6 +337,229 @@ export class ActivityRevisionPage extends ActivityReviewPage {
     return docStepHandled;
   }
 
+  // ─── General Review — Return as Incomplete (RAI) flow ────────────────────────
+
+  /**
+   * Identifies the status of the General Review lane by reading the
+   * ta-activity-lane--st-{status} class modifier — the same contract used
+   * by getDocumentReviewStatus() above.
+   * Returns 'done', 'pending', or 'not-found'.
+   */
+  private async getGeneralReviewStatus(): Promise<'done' | 'pending' | 'not-found'> {
+    const lanes = this.page.locator('.ta-activity-lane');
+    const laneCount = await lanes.count().catch(() => 0);
+    for (let i = 0; i < laneCount; i++) {
+      const lane = lanes.nth(i);
+      const typeText = await lane.locator('.ta-actrow__type').first().textContent().catch(() => '');
+      if (!/general\s*review/i.test(typeText ?? '')) continue;
+      const className = (await lane.getAttribute('class').catch(() => '')) ?? '';
+      if (/--st-(active|pending|hold)\b/.test(className)) return 'pending';
+      return 'done';
+    }
+    return 'not-found';
+  }
+
+  /**
+   * Reads the activity type of the FIRST active/pending lane on the current SR detail page.
+   * Returns the raw type text (e.g. "General review", "Document review") or an empty string.
+   *
+   * This is the authoritative detection mechanism for the RAI flow. Rather than detecting
+   * the step type AFTER navigating into the activity page (where page.title(), heading text,
+   * and button presence all proved unreliable), we read the lane type BEFORE navigating —
+   * from the SR detail page's lane list, using the exact same .ta-actrow__type selector
+   * that getDocumentReviewStatus() already uses successfully.
+   */
+  private async getNextActiveLaneType(): Promise<string> {
+    const lanes = this.page.locator('.ta-activity-lane');
+    const count = await lanes.count().catch(() => 0);
+    for (let i = 0; i < count; i++) {
+      const lane = lanes.nth(i);
+      const className = (await lane.getAttribute('class').catch(() => '')) ?? '';
+      if (!/--st-(active|pending|hold)\b/.test(className)) continue;
+      const typeText = await lane.locator('.ta-actrow__type').first().textContent().catch(() => '');
+      const type = typeText?.trim() ?? '';
+      if (type) {
+        console.log(`RAI: Next active lane type detected from detail page: "${type}"`);
+        return type;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Scans UNDER REVIEW SRs and for each one that has an actionable General Review
+   * step, triggers a "Return as incomplete" decision on it.
+   *
+   * Uses myRequestsPage.selectActiveRequest with a predicate to pre-filter
+   * single-reviewer SRs that have a pending General Review step.
+   */
+  async selectAndTriggerReturnAsIncomplete(myRequestsPage: MyRequestsPage): Promise<void> {
+    await myRequestsPage.selectActiveRequest(true, false, async () => {
+      const generalReviewStatus = await this.getGeneralReviewStatus();
+      if (generalReviewStatus === 'not-found' || generalReviewStatus === 'done') {
+        return false;
+      }
+      return this.processUntilFirstGeneralReviewReturnAsIncomplete(myRequestsPage);
+    });
+  }
+
+  /**
+   * Processes active activity steps sequentially.
+   * Non-General-Review steps (including Document Review steps) are approved normally.
+   * Upon encountering the FIRST General Review step:
+   *  1. Clicks "Mark All Sections Reviewed" (required before the verdict drawer is submittable).
+   *  2. Opens the verdict drawer (#ActivityVerdictButton).
+   *  3. Selects "Return as incomplete" via value="return".
+   *  4. Fills #RevisionNotesGroup notes.
+   *  5. Submits — puts the SR into "Correction Required" state.
+   *
+   * Step type detection uses getNextActiveLaneType() — reads the .ta-actrow__type text from
+   * the SR detail page BEFORE opening each activity. This is the same mechanism used by
+   * getDocumentReviewStatus() and is provably reliable. Post-navigation detection (page.title,
+   * heading text, button presence) was attempted and failed for all approaches.
+   *
+   * Returns:
+   *  true  — a General Review step was found and marked as Return as Incomplete
+   *  false — all active steps were processed without hitting a General Review step
+   */
+  async processUntilFirstGeneralReviewReturnAsIncomplete(
+    myRequestsPage: MyRequestsPage,
+    maxSteps = 10,
+  ): Promise<boolean> {
+    // Save tracking number into scenario state — needed by Phase 2 (citizen) and Phase 3 (reviewer).
+    const trackingNumber = await this.page
+      .locator('#ServiceRequestTrackingNumber')
+      .inputValue()
+      .catch(() => '');
+    if (trackingNumber) {
+      const state = getScenarioState(this.page);
+      state.trackingNumber = trackingNumber;
+      console.log(`Saved scenario tracking number in ActivityRevisionPage (RAI): ${trackingNumber}`);
+    } else {
+      console.log('Warning: #ServiceRequestTrackingNumber not found — tracking number not saved.');
+    }
+
+    let stepsProcessed = 0;
+    let generalReviewHandled = false;
+
+    while (stepsProcessed < maxSteps) {
+      // Read the next active lane type from the detail page BEFORE opening the activity.
+      // This is the reliable source of truth — the same .ta-actrow__type data used by
+      // getDocumentReviewStatus(). All post-navigation detection approaches failed.
+      const nextLaneType = await this.getNextActiveLaneType();
+      const isNextGeneralReview = /general\s*review/i.test(nextLaneType);
+
+      const hasNext = await myRequestsPage.openNextActiveActivity();
+      if (!hasNext) {
+        console.log(`No more active activities after ${stepsProcessed} step(s).`);
+        break;
+      }
+
+      let success = false;
+      let retries = 0;
+      while (!success && retries < 2) {
+        try {
+          if (isNextGeneralReview) {
+            console.log('General Review step confirmed (pre-read from detail page). Triggering Return as Incomplete flow...');
+
+            // 1. Mark all sections reviewed first — required before the verdict drawer
+            //    allows submission of non-approve decisions on General Review steps.
+            await this.completeGeneralReview();
+
+            // 2. Open verdict drawer — two-phase (click + waitForFunction on .show).
+            //    Rationale in openVerdictDrawerForPreSelection().
+            const drawer = await this.openVerdictDrawerForPreSelection('rai');
+
+            // 3. Select "Return as incomplete" via value="return".
+            //    We use value="return" rather than data-decision="4" because data-decision="4"
+            //    is also assigned to "Needs revision" on Document Review steps — targeting
+            //    by value avoids a cross-step false match and is the stable contract.
+            const returnInput = drawer.locator(
+              '#DecisionOptions input[name="VerdictOutcome"][value="return"]',
+            );
+            await expect(returnInput).toBeEnabled({ timeout: 5000 });
+            await returnInput.check();
+            await expect(returnInput).toBeChecked();
+
+            // 4. Fill Revision Notes in #RevisionNotesGroup — the same notes panel
+            //    that appears after selecting this verdict (confirmed via DevTools).
+            const revisionNotesGroup = drawer.locator('#RevisionNotesGroup');
+            await expect(revisionNotesGroup).toBeVisible({ timeout: 5000 });
+            const notesInput = revisionNotesGroup.locator('textarea, input').first();
+            if (await notesInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+              console.log('Filling Revision Notes for Return as Incomplete...');
+              await notesInput.fill(`Automation Return as Incomplete Note: ${faker.lorem.sentence()}`);
+            }
+
+            // 5. Submit — radio already pre-selected and confirmed via toBeChecked() above.
+            //    submitDecision() with { preSelected: true } honours the pre-checked radio
+            //    and skips the fee/approve fallbacks, same as the revision/rejection paths.
+            await this.submitDecision(undefined, { preSelected: true });
+            console.log('General Review step marked as Return as Incomplete. Halting further processing.');
+            generalReviewHandled = true;
+            return true; // submitDecision() already handled the redirect; exit immediately.
+
+          } else if (await this.isDocumentStep()) {
+            // Document Review step appearing before the General Review step — approve it normally.
+            console.log(`Non-General-Review step ("${nextLaneType || 'Document review'}") — processing document review normally.`);
+            await this.annotateAndComment();
+            await this.clickSaveAndNext();
+            await this.reviewReport();
+            await this.clickSaveAndNext();
+            await this.applyApprovedStamp();
+            await this.clickSaveAndNext();
+            await this.completeGeneralReview();
+            await this.completePackaging();
+            await this.submitDecision();
+            success = true;
+
+          } else {
+            // Any other non-doc, non-General-Review step — approve normally.
+            console.log(`Non-General-Review step ("${nextLaneType || 'unknown'}") — processing normally.`);
+            await this.completeGeneralReview();
+            await this.completePackaging();
+            await this.submitDecision();
+            success = true;
+          }
+        } catch (e: any) {
+          retries++;
+          if (retries >= 2) throw e;
+          console.log(`Activity failed: ${e.message}. Retrying...`);
+          const closeBtn = this.page.locator('#activity-verdict-drawer .btn-close').first();
+          if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) await closeBtn.click();
+          await this.page.goBack();
+          await this.page.waitForLoadState('domcontentloaded');
+        }
+      }
+
+      stepsProcessed++;
+      console.log(`Waiting for redirect after step ${stepsProcessed}...`);
+      const redirected = await this.page
+        .waitForURL((url) => !url.href.includes('Activity'), {
+          timeout: 30000,
+          waitUntil: 'domcontentloaded',
+        })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!redirected && this.page.url().includes('Activity')) {
+        const detailUrl = await this.page.locator('.ta-activity-shell').getAttribute('data-detail-url');
+        if (detailUrl) {
+          console.log(`Redirect stalled — navigating to detail URL: ${detailUrl}`);
+          await this.page.goto(detailUrl, { waitUntil: 'domcontentloaded' });
+        } else {
+          throw new Error(
+            `Still on Activity page after step ${stepsProcessed}; decision may not have submitted.`,
+          );
+        }
+      }
+
+      await this.waitForLoaders();
+    }
+
+    return generalReviewHandled;
+  }
+
   // ─── Conditional flow ────────────────────────────────────────────────────────
 
   /**
@@ -350,13 +607,9 @@ export class ActivityRevisionPage extends ActivityReviewPage {
       async () => {
         console.log('Document review step detected. Triggering Conditional Approval flow...');
 
-        // 1. Open verdict drawer explicitly — same proven pattern as revision/rejection.
-        const drawer = this.page.locator('#activity-verdict-drawer');
-        const verdictBtn = this.page.locator('#ActivityVerdictButton');
-        if (await verdictBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await verdictBtn.click();
-          await drawer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-        }
+        // 1. Open verdict drawer — two-phase (click + waitForFunction on .show).
+        //    Rationale in openVerdictDrawerForPreSelection().
+        const drawer = await this.openVerdictDrawerForPreSelection('conditional');
 
         // 2. Select 'Conditional' via its stable data-decision attribute — NOT label text.
         //    Same Finding 1 reasoning as the revision/rejection paths above.

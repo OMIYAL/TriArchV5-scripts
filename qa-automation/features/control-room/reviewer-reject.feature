@@ -3,7 +3,7 @@ Feature: Reviewer rejects a document review activity
   As a reviewer I want to review all the activity steps of a service request that has been assigned to me
   So the decision can be submitted successfully
 
-  @control-room @smoke
+  @control-room @smoke @long-flow
   Scenario: Reviewer successfully rejects the activity steps decision
 
     # --- Login & navigation — reuses reviewer.steps.ts ---
