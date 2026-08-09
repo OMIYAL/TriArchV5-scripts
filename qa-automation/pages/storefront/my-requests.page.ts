@@ -64,11 +64,14 @@ export class MyRequestsPage extends BasePage {
    * Called inside scanAndSelect() so it runs on every scan pass — including
    * after goBack() + recursive scanAndSelect() calls which reset pagination.
    *
-   * @param size - One of the four sizes the app supports: 25 | 50 | 100 (default 50).
+   * @param size - One of the four sizes the app supports: 10 | 25 | 50 | 100 (default 50).
    */
   private async setTablePageSize(size: 25 | 50 | 100 = 50): Promise<void> {
-    // 1. Scroll to the table footer where the page-size control lives.
-    const footer = this.page.locator('.dataTables_footer').first();
+    // 1. Scroll to the table length control. The app emits `.dataTables_length` (DataTables
+    //    standard) and `.dt-length` (DataTables 2.x alias) — NOT `.dataTables_footer`.
+    //    Confirmed from the theme's ta-datatables-length-flip.js:3 which anchors to
+    //    '.dataTables_length select, .dt-length select, select[id^="dt-length-"]'.
+    const footer = this.page.locator('.dataTables_length, .dt-length').first();
     if (await footer.isVisible({ timeout: 3000 }).catch(() => false)) {
       await footer.scrollIntoViewIfNeeded();
     }
@@ -133,8 +136,9 @@ export class MyRequestsPage extends BasePage {
       });
 
     // Stage C: wait for more than the default 10 rows to be in the DOM.
-    // This is the definitive signal that the DataTable has finished painting the
-    // expanded row set — not just that the first row exists.
+    // waitForFunction resolves to a JSHandle<number> — r.valueOf() falls through to
+    // Object.prototype.valueOf() and returns the handle itself (always truthy). Use
+    // jsonValue() to extract the actual row count, then dispose the handle.
     const defaultPageSize = 10;
     const finalCount = await this.page
       .waitForFunction(
@@ -145,7 +149,7 @@ export class MyRequestsPage extends BasePage {
         defaultPageSize,
         { timeout: 15000 },
       )
-      .then(r => r.valueOf())
+      .then(async (r) => { const v = await r.jsonValue(); r.dispose(); return v; })
       .catch(() => {
         // Soft catch: the filtered view may genuinely have ≤ 10 rows (e.g. only 4
         // Under Review SRs exist). Log and proceed — the caller's count refresh will

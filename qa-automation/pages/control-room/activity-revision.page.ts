@@ -45,14 +45,24 @@ export class ActivityRevisionPage extends ActivityReviewPage {
    * Two-phase open (required for CI stability):
    *  1. Click `#ActivityVerdictButton` to trigger the Bootstrap open animation.
    *  2. `waitForFunction` on `.show` class — the animation-complete signal.
-   *     Using `.show` (not Playwright `isVisible`) prevents callers from
-   *     interacting with a still-animating drawer, which causes Bootstrap to
-   *     treat the click as an outside-click and dismiss the offcanvas, then
-   *     `submitDecision()` reopens it and resets the radio to the server default
-   *     (Approve) — the root cause of the original CI wrong-verdict bug.
+   *     Using `.show` prevents callers from interacting before the drawer is
+   *     fully open. Gating on `.show` is also the correct guard against the
+   *     re-fetch race described below.
    *  3. Falls back to `waitFor({state:'visible'})` with a loud warning if `.show`
-   *     is not detected within 8 s — slow CI environments still proceed, but the
+   *     is not detected within 15s — slow CI environments still proceed, but the
    *     warning is visible in logs so the flake is never silent.
+   *
+   * Why a redundant `openDecisionDrawer()` call (i.e. a double-click) is harmful:
+   *  The drawer is opened through `abp.OffcanvasManager` (Activity/Index.js:52),
+   *  which re-fetches the `ActivityVerdictDrawer` partial and **replaces the
+   *  drawer's entire DOM** on every `open()` call. Any radio checked before
+   *  that fetch lands is destroyed, and the server re-renders with `firstEnabled`
+   *  checked — which is exactly the "resets to Approve" symptom. The `alreadyOpen`
+   *  guard in `openDecisionDrawer()` prevents this re-fetch by skipping re-click
+   *  when `.show` is already present.
+   *
+   *  (Note: the drawer has `data-bs-backdrop="false"` so Bootstrap's outside-click
+   *  dismissal mechanism never fires — an earlier comment blaming it was incorrect.)
    *
    * @param context - Short label for warning messages: 'revision' | 'rejection' |
    *                  'rai' | 'conditional'.
@@ -61,23 +71,36 @@ export class ActivityRevisionPage extends ActivityReviewPage {
   private async openVerdictDrawerForPreSelection(context: string): Promise<Locator> {
     const drawer = this.page.locator('#activity-verdict-drawer');
     const verdictBtn = this.page.locator('#ActivityVerdictButton');
-    if (await verdictBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await verdictBtn.click();
-      const showReady = await this.page
-        .waitForFunction(
-          () => !!document.querySelector('#activity-verdict-drawer.show'),
-          { timeout: 8000 },
-        )
-        .then(() => true)
-        .catch(() => false);
-      if (!showReady) {
-        console.warn(
-          `[openDrawer/${context}] #activity-verdict-drawer.show not detected within 8s `
-          + '— falling back to isVisible. If radio resets, increase timeout or check CI perf.',
-        );
-        await drawer.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-      }
+
+    // Hard wait — NOT isVisible({ timeout: 2000 }).
+    // isVisible with a short timeout was the root cause of the intermittent "drawer open
+    // but not submitting" failure: on a slow CI runner the button takes >2s to appear
+    // after waitForLoaders(), so isVisible returns false, the entire if-block is skipped,
+    // and the method returns a closed drawer to the caller. The caller's radio assertions
+    // then run against a drawer that was never opened.
+    // A 30s hard waitFor fails loudly and immediately at the right place instead.
+    await verdictBtn.waitFor({ state: 'visible', timeout: 30000 });
+    await verdictBtn.click();
+
+    const showReady = await this.page
+      .waitForFunction(
+        () => !!document.querySelector('#activity-verdict-drawer.show'),
+        { timeout: 15000 }, // increased from 8s — slow CI can take longer to animate
+      )
+      .then(() => true)
+      .catch(() => false);
+
+    if (!showReady) {
+      console.warn(
+        `[openDrawer/${context}] #activity-verdict-drawer.show not detected within 15s `
+        + '— falling back to isVisible. If radio resets, increase timeout or check CI perf.',
+      );
+      // Hard throw: if the fallback also times out, returning a closed/animating drawer
+      // causes the caller's radio interactions to race Bootstrap's close animation,
+      // silently submitting the wrong default verdict ("Approved") instead.
+      await drawer.waitFor({ state: 'visible', timeout: 5000 });
     }
+
     return drawer;
   }
 
@@ -135,6 +158,14 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         //    Rationale in openVerdictDrawerForPreSelection().
         const drawer = await this.openVerdictDrawerForPreSelection('revision');
 
+        // 1b. Wait for the decision FORM (#DecisionOptions) to be attached before touching
+        //     any radio. The Bootstrap .show class fires when the offcanvas CONTAINER is
+        //     ready, but the form content inside is rendered by a separate JS fetch/render
+        //     cycle. On slow CI this gap can be >5s, causing toBeEnabled() to throw before
+        //     the radio even exists, which falls into the catch → goBack() → Tab 1 → Circle
+        //     error (the misleading downstream symptom the video shows).
+        await drawer.locator('#DecisionOptions').waitFor({ state: 'attached', timeout: 15000 });
+
         // 2. Select "Needs revision" via its stable data-decision attribute — NOT label text.
         //    Finding 1: label-text `.isVisible().catch(() => false)` with no `else` meant a
         //    missing/disabled/drifted label silently left the app's own pre-checked default
@@ -142,7 +173,7 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         //    toBeChecked() assertion below closes that: if the wrong radio ends up checked,
         //    this fails loudly instead of silently approving.
         const revisionInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="4"]');
-        await expect(revisionInput).toBeEnabled({ timeout: 5000 });
+        await expect(revisionInput).toBeEnabled({ timeout: 15000 });
         await revisionInput.check();
         await expect(revisionInput).toBeChecked();
 
@@ -213,10 +244,16 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         //    Rationale in openVerdictDrawerForPreSelection().
         const drawer = await this.openVerdictDrawerForPreSelection('rejection');
 
+        // 1b. Wait for #DecisionOptions to be attached before touching any radio.
+        //     Same reasoning as the revision path: .show fires on the container, but the
+        //     form content renders in a separate JS cycle. On slow CI this causes
+        //     toBeEnabled() to throw, which falls into catch → goBack() → Tab 1 → Circle error.
+        await drawer.locator('#DecisionOptions').waitFor({ state: 'attached', timeout: 15000 });
+
         // 2. Select 'Reject' via its stable data-decision attribute — NOT label text.
         //    Same Finding 1 reasoning as the revision path above.
         const rejectInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="2"]');
-        await expect(rejectInput).toBeEnabled({ timeout: 5000 });
+        await expect(rejectInput).toBeEnabled({ timeout: 15000 });
         await rejectInput.check();
         await expect(rejectInput).toBeChecked();
 
@@ -470,14 +507,19 @@ export class ActivityRevisionPage extends ActivityReviewPage {
             //    Rationale in openVerdictDrawerForPreSelection().
             const drawer = await this.openVerdictDrawerForPreSelection('rai');
 
-            // 3. Select "Return as incomplete" via value="return".
+            // 3. Wait for #DecisionOptions form content before touching any radio.
+            //    Same root cause as all other verdict callbacks: .show fires on the container
+            //    but the form renders in a separate JS cycle.
+            await drawer.locator('#DecisionOptions').waitFor({ state: 'attached', timeout: 15000 });
+
+            // 4. Select "Return as incomplete" via value="return".
             //    We use value="return" rather than data-decision="4" because data-decision="4"
             //    is also assigned to "Needs revision" on Document Review steps — targeting
             //    by value avoids a cross-step false match and is the stable contract.
             const returnInput = drawer.locator(
               '#DecisionOptions input[name="VerdictOutcome"][value="return"]',
             );
-            await expect(returnInput).toBeEnabled({ timeout: 5000 });
+            await expect(returnInput).toBeEnabled({ timeout: 15000 });
             await returnInput.check();
             await expect(returnInput).toBeChecked();
 
@@ -496,7 +538,6 @@ export class ActivityRevisionPage extends ActivityReviewPage {
             //    and skips the fee/approve fallbacks, same as the revision/rejection paths.
             await this.submitDecision(undefined, { preSelected: true });
             console.log('General Review step marked as Return as Incomplete. Halting further processing.');
-            generalReviewHandled = true;
             return true; // submitDecision() already handled the redirect; exit immediately.
 
           } else if (await this.isDocumentStep()) {
@@ -529,6 +570,10 @@ export class ActivityRevisionPage extends ActivityReviewPage {
           if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) await closeBtn.click();
           await this.page.goBack();
           await this.page.waitForLoadState('domcontentloaded');
+          // Required: after goBack() we are on the SR detail page, not the activity page.
+          // Without this the retry immediately calls completeGeneralReview()/annotateAndComment()
+          // on the detail page, which is guaranteed to fail and points the error at the wrong step.
+          await myRequestsPage.openNextActiveActivity();
         }
       }
 
@@ -611,10 +656,16 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         //    Rationale in openVerdictDrawerForPreSelection().
         const drawer = await this.openVerdictDrawerForPreSelection('conditional');
 
-        // 2. Select 'Conditional' via its stable data-decision attribute — NOT label text.
+        // 2. Wait for #DecisionOptions form content before touching any radio.
+        //    Same root cause as revision/rejection: .show fires on the container but the
+        //    form renders in a separate JS cycle. Missing this wait caused toBeEnabled() to
+        //    throw → catch → goBack() → Tab 2 screenshot (the confirmed failure pattern).
+        await drawer.locator('#DecisionOptions').waitFor({ state: 'attached', timeout: 15000 });
+
+        // 3. Select 'Conditional' via its stable data-decision attribute — NOT label text.
         //    Same Finding 1 reasoning as the revision/rejection paths above.
         const conditionalInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="1"]');
-        await expect(conditionalInput).toBeEnabled({ timeout: 5000 });
+        await expect(conditionalInput).toBeEnabled({ timeout: 15000 });
         await conditionalInput.check();
         await expect(conditionalInput).toBeChecked();
 
