@@ -31,8 +31,20 @@ When('the user navigates to the Services page and browses through all services',
 });
 
 When('the user navigates to the About page and scrolls through it', async ({ page }) => {
-  await new StorefrontHomePage(page).browseAboutPage();
+  // Stg nav has "About us" — Prod nav has "News" in its place.
+  const aboutUsLink = page.getByRole('link', { name: /About us/i }).first();
+  const newsLink    = page.getByRole('link', { name: /^News$/i }).first();
+
+  const hasAboutUs = await aboutUsLink.isVisible().catch(() => false);
+  if (hasAboutUs) {
+    await aboutUsLink.click();
+  } else {
+    await newsLink.click();
+  }
+  await page.waitForLoadState('domcontentloaded');
+  await scrollFromTop(page); // already statically imported at top of file
 });
+
 
 When('the user navigates to the Service Requests page clicks reload and scrolls', async ({ page }) => {
   await new MyRequestsPage(page).navigateReloadAndScroll();

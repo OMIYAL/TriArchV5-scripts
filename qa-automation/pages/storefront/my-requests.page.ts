@@ -64,7 +64,7 @@ export class MyRequestsPage extends BasePage {
    * Called inside scanAndSelect() so it runs on every scan pass — including
    * after goBack() + recursive scanAndSelect() calls which reset pagination.
    *
-   * @param size - One of the four sizes the app supports: 10 | 25 | 50 | 100 (default 50).
+   * * @param size - One of the sizes the app supports: 25 | 50 | 100 (default 50).
    */
   private async setTablePageSize(size: 25 | 50 | 100 = 50): Promise<void> {
     // 1. Scroll to the table length control. The app emits `.dataTables_length` (DataTables
@@ -172,10 +172,115 @@ export class MyRequestsPage extends BasePage {
   }
 
   async selectClosedRequest(): Promise<void> {
-    await expect(this.page.getByRole('cell', { name: 'Closed' }).first()).toBeVisible();
-    const closedRows = this.page.getByRole('row').filter({ hasText: 'Closed' });
-    await closedRows.first().getByRole('link').first().click();
+    // ── Wait for DataTable to finish its initial load cycle ───────────────────
+    // waitForListToLoad() only confirms the Reload button is visible — the
+    // DataTable rows may still be fetching. Wait for the full data cycle before
+    // touching the length control or scanning rows.
+    await this.waitForTableData();
+
+    // ── Step 1: Expand the table ──────────────────────────────────────────────
+    // The portal uses a custom .ta-length-menu__btn (hidden on storefront).
+    // The storefront My Requests page shows the native .ta-length-menu__native select.
+    const expanded = await this.tryExpandTableForStorefront(50);
+    console.log(`selectClosedRequest: table expansion ${expanded ? 'succeeded' : 'skipped (no length control found)'}.`);
+
+    // ── Step 2: Scan current page ─────────────────────────────────────────────
+    const found = await this.scanPageForClosedRow();
+    if (found) return;
+
+    // ── Step 3: Closed filter pill ────────────────────────────────────────────
+    const closedPill = this.page.getByRole('button', { name: /^Closed$/i, exact: true }).first();
+    if (await closedPill.isVisible({ timeout: 5000 }).catch(() => false)) {
+      console.log('selectClosedRequest: applying Closed filter pill.');
+      await closedPill.click();
+      await this.waitForFilteredTableData();
+      const found2 = await this.scanPageForClosedRow();
+      if (found2) return;
+    }
+
+    // ── Step 4: Paginate through all pages if the table wasn't expandable ────
+    if (!expanded) {
+      console.log('selectClosedRequest: expansion unavailable — paginating through all pages...');
+      let page = 2;
+      while (true) {
+        const nextBtn = this.page.locator('.paginate_button.next:not(.disabled), .dt-paging-button.next:not(.disabled)').first();
+        if (!await nextBtn.isVisible({ timeout: 3000 }).catch(() => false)) break;
+        await nextBtn.click();
+        await this.waitForTableData();
+        console.log(`selectClosedRequest: scanning page ${page}...`);
+        const found3 = await this.scanPageForClosedRow();
+        if (found3) return;
+        page++;
+        if (page > 20) break; // safety limit
+      }
+    }
+
+    throw new Error(
+      'selectClosedRequest: no Closed service request found after expanding table, checking filter pill, and paginating all pages. ' +
+      'If this is a fresh test account, ensure at least one SR has been fully processed to Closed status before running this scenario.'
+    );
   }
+
+  /** Tries to expand the DataTable using the standard native <select> element (storefront fallback). */
+  private async tryExpandTableForStorefront(size: number): Promise<boolean> {
+    // First try the portal's custom length menu button
+    const menuBtn = this.page.locator('.ta-length-menu__btn').first();
+    if (await menuBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await this.setTablePageSize(50);
+      return true;
+    }
+
+    // Storefront uses .ta-length-menu__native (visible select, confirmed from DOM).
+    // The .ta-length-menu__btn is hidden on storefront — only the native select is shown.
+    const nativeSelect = this.page.locator(
+      'select.ta-length-menu__native, select[name*="DataTables_Table"], select[name*="dt-length"]'
+    ).first();
+
+    if (!await nativeSelect.isVisible({ timeout: 3000 }).catch(() => false)) {
+      return false;
+    }
+
+    const options = await nativeSelect.locator('option').allTextContents();
+    // Pick the option closest to (but not exceeding) the requested size, or the largest available
+    const bestOption = options
+      .map(o => parseInt(o.trim(), 10))
+      .filter(n => !isNaN(n))
+      .reduce((best, n) => (n <= size && n > best ? n : best), -1);
+
+    if (bestOption === -1) return false;
+
+    const currentVal = await nativeSelect.inputValue().catch(() => '');
+    if (currentVal === String(bestOption)) return true; // already at desired size
+
+    console.log(`selectClosedRequest: expanding via native select → ${bestOption} rows per page`);
+    await nativeSelect.selectOption(String(bestOption));
+    await this.waitForTableData();
+    return true;
+  }
+
+  /** Scans all currently visible tbody rows for a Closed SR and clicks it if found. */
+  private async scanPageForClosedRow(): Promise<boolean> {
+    const rows = this.page.locator('tbody tr');
+    const count = await rows.count();
+    for (let i = 0; i < count; i++) {
+      const row = rows.nth(i);
+      const text = await row.textContent().catch(() => '');
+      if (!text?.toUpperCase().includes('CLOSED')) continue;
+      const link = row.getByRole('link').first();
+      if (!await link.isVisible().catch(() => false)) continue;
+      console.log(`selectClosedRequest: found Closed SR at row ${i + 1}.`);
+      await link.click();
+      await this.page.waitForURL(/ServiceRequests\/Detail/i, {
+        timeout: 30000,
+        waitUntil: 'domcontentloaded',
+      });
+      await this.waitForLoaders();
+      return true;
+    }
+    return false;
+  }
+
+
 
   /** Returns the number of `.ta-reviewer-chip` elements on the current SR detail page. */
   private async getReviewerCount(): Promise<number> {
@@ -319,7 +424,7 @@ export class MyRequestsPage extends BasePage {
     );
   }
 
-  async openNextActiveActivity(): Promise<boolean> {
+  async openNextActiveActivity({ fastFail = false }: { fastFail?: boolean } = {}): Promise<boolean> {
     console.log('Landing on Service Request Details. Waiting for framework to load...');
     await this.page.waitForLoadState('domcontentloaded');
     await this.waitForLoaders();
@@ -337,7 +442,12 @@ export class MyRequestsPage extends BasePage {
         console.log('Service request is Closed. No more activities to process.');
         return false;
       }
-
+      // Recovery callers (from catch blocks in activity-revision.page.ts) pass fastFail
+      // to skip the 3-retry reload loop below. Rationale: after a goBack() the detail
+      // page is either ready in the initial 10s probe or it won't be — reloading three
+      // more times burns the step's budget and lets Playwright replace the caller's
+      // real error with 'Test timeout of 240000ms exceeded'.
+      if (fastFail) return false;
       let retries = 0;
       while (retries < 3 && !isVisible) {
         retries++;

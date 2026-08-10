@@ -38,8 +38,13 @@ export class OffcanvasDecisionComponent extends BasePage {
    * Sticky toolbars often intercept normal Playwright clicks on #ActivityVerdictButton, so we
    * force-click first; if the drawer still doesn't open, we scroll clear of the toolbar and
    * retry with a real click rather than bypassing the browser's event dispatch entirely.
+   *
+   * Public (not private): ActivityReviewPage exposes this via openVerdictDrawer() so that
+   * subclasses needing to pre-select a radio before submitDecision() (revision / rejection /
+   * RAI / conditional flows) can open the real, guarded drawer instead of re-implementing
+   * the alreadyOpen check, fallback-button search, and sticky-toolbar retry a second time.
    */
-  private async openDecisionDrawer(): Promise<void> {
+  async openDecisionDrawer(): Promise<void> {
     // FIX (CI double-open race): check for Bootstrap's `.show` class to determine
     // whether the drawer is already open before deciding to re-click the button.
     //

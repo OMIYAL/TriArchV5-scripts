@@ -39,69 +39,36 @@ export class ActivityRevisionPage extends ActivityReviewPage {
   // ─── Shared drawer-open helper ────────────────────────────────────────────
 
   /**
-   * Opens `#activity-verdict-drawer` using the two-phase approach and returns
-   * the drawer Locator so callers can immediately select a radio.
+   * Opens `#activity-verdict-drawer` and returns the Locator so callers can immediately
+   * pre-select a radio, before calling `submitDecision(undefined, { preSelected: true })`.
    *
-   * Two-phase open (required for CI stability):
-   *  1. Click `#ActivityVerdictButton` to trigger the Bootstrap open animation.
-   *  2. `waitForFunction` on `.show` class — the animation-complete signal.
-   *     Using `.show` prevents callers from interacting before the drawer is
-   *     fully open. Gating on `.show` is also the correct guard against the
-   *     re-fetch race described below.
-   *  3. Falls back to `waitFor({state:'visible'})` with a loud warning if `.show`
-   *     is not detected within 15s — slow CI environments still proceed, but the
-   *     warning is visible in logs so the flake is never silent.
+   * Delegates entirely to `OffcanvasDecisionComponent.openDecisionDrawer()` (via the
+   * `openVerdictDrawer()` passthrough on `ActivityReviewPage`) rather than re-implementing
+   * the open sequence. That shared implementation is required here, not optional — it's
+   * the same guard `submitDecision()` depends on:
    *
-   * Why a redundant `openDecisionDrawer()` call (i.e. a double-click) is harmful:
-   *  The drawer is opened through `abp.OffcanvasManager` (Activity/Index.js:52),
-   *  which re-fetches the `ActivityVerdictDrawer` partial and **replaces the
-   *  drawer's entire DOM** on every `open()` call. Any radio checked before
-   *  that fetch lands is destroyed, and the server re-renders with `firstEnabled`
-   *  checked — which is exactly the "resets to Approve" symptom. The `alreadyOpen`
-   *  guard in `openDecisionDrawer()` prevents this re-fetch by skipping re-click
-   *  when `.show` is already present.
+   * Why a redundant open (i.e. a second click while already open) is harmful:
+   *  The drawer is opened through `abp.OffcanvasManager` (Activity/Index.js:52), which
+   *  re-fetches the `ActivityVerdictDrawer` partial and **replaces the drawer's entire
+   *  DOM** on every `open()` call. Any radio checked before that fetch lands is destroyed,
+   *  and the server re-renders with `firstEnabled` checked — the "resets to Approve"
+   *  symptom. `openDecisionDrawer()`'s `alreadyOpen` guard (checks `.show` before
+   *  clicking) is what prevents that — a re-implementation here that doesn't carry the
+   *  same guard, fallback-button search, and jQuery click-handler wait would reproduce
+   *  the exact bug this method exists to avoid, the moment it's called on an already-open
+   *  drawer.
    *
    *  (Note: the drawer has `data-bs-backdrop="false"` so Bootstrap's outside-click
    *  dismissal mechanism never fires — an earlier comment blaming it was incorrect.)
    *
-   * @param context - Short label for warning messages: 'revision' | 'rejection' |
+   * @param context - Short label for log messages: 'revision' | 'rejection' |
    *                  'rai' | 'conditional'.
    * @returns The `#activity-verdict-drawer` Locator (already open).
    */
   private async openVerdictDrawerForPreSelection(context: string): Promise<Locator> {
-    const drawer = this.page.locator('#activity-verdict-drawer');
-    const verdictBtn = this.page.locator('#ActivityVerdictButton');
-
-    // Hard wait — NOT isVisible({ timeout: 2000 }).
-    // isVisible with a short timeout was the root cause of the intermittent "drawer open
-    // but not submitting" failure: on a slow CI runner the button takes >2s to appear
-    // after waitForLoaders(), so isVisible returns false, the entire if-block is skipped,
-    // and the method returns a closed drawer to the caller. The caller's radio assertions
-    // then run against a drawer that was never opened.
-    // A 30s hard waitFor fails loudly and immediately at the right place instead.
-    await verdictBtn.waitFor({ state: 'visible', timeout: 30000 });
-    await verdictBtn.click();
-
-    const showReady = await this.page
-      .waitForFunction(
-        () => !!document.querySelector('#activity-verdict-drawer.show'),
-        { timeout: 15000 }, // increased from 8s — slow CI can take longer to animate
-      )
-      .then(() => true)
-      .catch(() => false);
-
-    if (!showReady) {
-      console.warn(
-        `[openDrawer/${context}] #activity-verdict-drawer.show not detected within 15s `
-        + '— falling back to isVisible. If radio resets, increase timeout or check CI perf.',
-      );
-      // Hard throw: if the fallback also times out, returning a closed/animating drawer
-      // causes the caller's radio interactions to race Bootstrap's close animation,
-      // silently submitting the wrong default verdict ("Approved") instead.
-      await drawer.waitFor({ state: 'visible', timeout: 5000 });
-    }
-
-    return drawer;
+    console.log(`[openDrawer/${context}] opening via shared openDecisionDrawer()...`);
+    await this.openVerdictDrawer();
+    return this.page.locator('#activity-verdict-drawer');
   }
 
   // ─── Revision flow ────────────────────────────────────────────────────────

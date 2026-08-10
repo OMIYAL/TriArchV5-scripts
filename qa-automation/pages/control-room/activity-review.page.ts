@@ -30,6 +30,17 @@ export class ActivityReviewPage extends BasePage {
   // --- Decision Drawer 
   async submitDecision(decisionName?: string, opts?: { preSelected?: boolean }) { await this.decisionDrawer.submitDecision(decisionName, opts); }
 
+  /**
+   * Opens #activity-verdict-drawer via the shared, guarded implementation (alreadyOpen
+   * check, fallback-button search, jQuery click-handler wait, sticky-toolbar retry).
+   * Exposed to subclasses that need the drawer open BEFORE calling submitDecision() —
+   * e.g. to pre-select a specific radio (revision / rejection / RAI / conditional flows)
+   * — so they don't need a second, independent open-sequence implementation.
+   */
+  protected async openVerdictDrawer(): Promise<void> {
+    await this.decisionDrawer.openDecisionDrawer();
+  }
+
   // --- General Review & Fee Checklist 
 
   async markAllCleared() { await this.generalReview.markAllCleared(); }
@@ -117,4 +128,3 @@ export class ActivityReviewPage extends BasePage {
     }
   }
 }
-

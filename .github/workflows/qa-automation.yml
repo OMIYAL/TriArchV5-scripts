@@ -75,6 +75,12 @@ jobs:
     env:
       CI: "true"
 
+      # ---- Active environment (drives env.config.ts prefix resolver)
+      # Normalise the long-form GitHub Environment name to the short form the
+      # resolver expects: 'staging' → 'stg', 'production' → 'prod'.
+      # The resolver itself also accepts these long-form aliases as a safety net.
+      TEST_ENV: ${{ inputs.environment == 'production' && 'prod' || (inputs.environment == 'staging' || inputs.environment == '') && 'stg' || inputs.environment || 'stg' }}
+
       # ---- Environment under test
       # These are already configured as repository *secrets* (matching the
       # older playwright.yml), so read the secret first and fall back to a
