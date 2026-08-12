@@ -28,10 +28,12 @@ When('the user clicks the {string} button', async ({ page }, btnName: string) =>
 Then('the contact request is submitted successfully', async ({ page }) => {
   // Stg: "Thank you for contacting us" / "Message received"
   // Prod: "Message sent" (h3) + "Thanks for reaching out..." (p) — both visible simultaneously.
-  // Target the heading only to avoid strict-mode violation from 2 elements matching the regex.
+  // Target the heading first to avoid strict-mode violation from 2 elements matching.
+  // The .or() fallback catches environments where the confirmation is a <p> not a heading.
+  const CONFIRMATION = /Message sent|Message received|Thank you for contacting us/i;
   await expect(
-    page.getByRole('heading', { name: /Message sent|Message received|Thank you for contacting us/i })
-      .or(page.getByText(/Message received/i).first())
+    page.getByRole('heading', { name: CONFIRMATION })
+      .or(page.getByText(CONFIRMATION).first())
       .first()
   ).toBeVisible({ timeout: 15000 });
 });

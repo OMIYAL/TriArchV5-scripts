@@ -36,13 +36,19 @@ When('the user navigates to the About page and scrolls through it', async ({ pag
   const newsLink    = page.getByRole('link', { name: /^News$/i }).first();
 
   const hasAboutUs = await aboutUsLink.isVisible().catch(() => false);
+  const hasNews    = await newsLink.isVisible().catch(() => false);
+  if (!hasAboutUs && !hasNews) {
+    throw new Error(
+      'Neither "About us" (stg) nor "News" (prod) found in the storefront nav — nav labels may have drifted.',
+    );
+  }
   if (hasAboutUs) {
     await aboutUsLink.click();
   } else {
     await newsLink.click();
   }
   await page.waitForLoadState('domcontentloaded');
-  await scrollFromTop(page); // already statically imported at top of file
+  await scrollFromTop(page);
 });
 
 

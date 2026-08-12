@@ -2,8 +2,9 @@
  * LOCAL:  TEST_ENV is read from .env (default: stg).
  *         Resolves STG_X or PROD_X prefix and injects flat values.
  *
- * CI:     TEST_ENV is set by the workflow from inputs.environment (already normalised
- *         to 'stg' or 'prod' by the alias expression in qa-automation.yml).
+ * CI:     TEST_ENV is set by the workflow from inputs.environment (long-form:
+ *         'staging' or 'production'). The ALIASES map below normalises it to
+ *         'stg' or 'prod'.
  *         GitHub injects flat secrets directly; the prefix resolver skips keys
  *         that are already set so CI secrets always take precedence over .env.
  *
@@ -35,9 +36,18 @@ if (!TEST_ENV) {
 const PREFIX = TEST_ENV.toUpperCase(); // 'STG' | 'PROD'
 
 // ── Keys that are env-specific ───────────────────────────────────────────────
-// Add new env-specific keys here — it is the single change needed when a new
-// variable is introduced, ensuring the prefix resolver never drifts from the
-// actual surface the suite reads from process.env.
+// Prefix resolver maps PREFIX_KEY → KEY for the active environment.
+// Only include keys whose value differs between STG and PROD.
+//
+// Intentionally excluded (env-agnostic, random-selection behaviour):
+//   SERVICE_NAME     — steps/citizen.steps.ts picks a random available service when
+//                      this key is unset. This is the correct behaviour for both STG
+//                      and PROD (tenant) — no pinning needed.
+//   TEST_DEFAULT_PDF — utils/document.helper.ts picks a random document from the
+//                      fixtures folder when unset. Same pattern on both environments.
+//   TEST_DOCUMENTS_DIR — defaults to the repo fixtures folder on both environments.
+// These three keys follow the same random-fallback pattern used on staging and
+// there is no requirement to pin them on production.
 const ENV_SPECIFIC_KEYS = [
   'STOREFRONT_BASE_URL',
   'PORTAL_BASE_URL',

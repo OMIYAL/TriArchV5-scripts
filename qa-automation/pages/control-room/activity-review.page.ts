@@ -104,7 +104,13 @@ export class ActivityReviewPage extends BasePage {
           if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) await closeBtn.click();
           await this.page.goBack();
           await this.page.waitForLoadState('domcontentloaded');
-          await myRequestsPage.openNextActiveActivity();
+          const reopened = await myRequestsPage
+            .openNextActiveActivity({ fastFail: true })
+            .catch((navErr: any) => {
+              console.log(`Recovery navigation failed: ${navErr.message}`);
+              return false;
+            });
+          if (!reopened) throw e; // preserve the original failure
         }
       }
 
@@ -127,4 +133,4 @@ export class ActivityReviewPage extends BasePage {
       await this.waitForLoaders();
     }
   }
-}
+}

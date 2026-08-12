@@ -43,8 +43,11 @@ on:
         default: true
       environment:
         description: "GitHub Environment holding the URLs/credentials"
-        type: string
+        type: choice
         default: staging
+        options:
+          - staging
+          - production
 
   repository_dispatch:
     types: [qa-run]
@@ -76,10 +79,9 @@ jobs:
       CI: "true"
 
       # ---- Active environment (drives env.config.ts prefix resolver)
-      # Normalise the long-form GitHub Environment name to the short form the
-      # resolver expects: 'staging' → 'stg', 'production' → 'prod'.
-      # The resolver itself also accepts these long-form aliases as a safety net.
-      TEST_ENV: ${{ inputs.environment == 'production' && 'prod' || (inputs.environment == 'staging' || inputs.environment == '') && 'stg' || inputs.environment || 'stg' }}
+      # env.config.ts ALIASES maps 'staging'→'stg' and 'production'→'prod';
+      # it also throws loudly on unknown values — no need to normalise here.
+      TEST_ENV: ${{ inputs.environment || 'staging' }}
 
       # ---- Environment under test
       # These are already configured as repository *secrets* (matching the

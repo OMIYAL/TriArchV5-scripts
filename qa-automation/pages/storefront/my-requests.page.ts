@@ -64,7 +64,7 @@ export class MyRequestsPage extends BasePage {
    * Called inside scanAndSelect() so it runs on every scan pass — including
    * after goBack() + recursive scanAndSelect() calls which reset pagination.
    *
-   * * @param size - One of the sizes the app supports: 25 | 50 | 100 (default 50).
+   * @param size - One of the sizes the app supports: 25 | 50 | 100 (default 50).
    */
   private async setTablePageSize(size: 25 | 50 | 100 = 50): Promise<void> {
     // 1. Scroll to the table length control. The app emits `.dataTables_length` (DataTables
@@ -198,21 +198,21 @@ export class MyRequestsPage extends BasePage {
       if (found2) return;
     }
 
-    // ── Step 4: Paginate through all pages if the table wasn't expandable ────
-    if (!expanded) {
-      console.log('selectClosedRequest: expansion unavailable — paginating through all pages...');
-      let page = 2;
-      while (true) {
-        const nextBtn = this.page.locator('.paginate_button.next:not(.disabled), .dt-paging-button.next:not(.disabled)').first();
-        if (!await nextBtn.isVisible({ timeout: 3000 }).catch(() => false)) break;
-        await nextBtn.click();
-        await this.waitForTableData();
-        console.log(`selectClosedRequest: scanning page ${page}...`);
-        const found3 = await this.scanPageForClosedRow();
-        if (found3) return;
-        page++;
-        if (page > 20) break; // safety limit
-      }
+    // ── Step 4: Paginate — SR not found on the current (possibly expanded) page ───
+    // This runs regardless of whether expansion succeeded: the SR may exist beyond
+    // the first page even when 50 rows are shown (e.g. account has 63 closed SRs).
+    console.log('selectClosedRequest: not found on the current page — paginating...');
+    let pageNum = 2;
+    while (true) {
+      const nextBtn = this.page.locator('.paginate_button.next:not(.disabled), .dt-paging-button.next:not(.disabled)').first();
+      if (!await nextBtn.isVisible({ timeout: 3000 }).catch(() => false)) break;
+      await nextBtn.click();
+      await this.waitForTableData();
+      console.log(`selectClosedRequest: scanning page ${pageNum}...`);
+      const found3 = await this.scanPageForClosedRow();
+      if (found3) return;
+      pageNum++;
+      if (pageNum > 20) break; // safety limit
     }
 
     throw new Error(
@@ -226,7 +226,7 @@ export class MyRequestsPage extends BasePage {
     // First try the portal's custom length menu button
     const menuBtn = this.page.locator('.ta-length-menu__btn').first();
     if (await menuBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await this.setTablePageSize(50);
+      await this.setTablePageSize(size as 25 | 50 | 100);
       return true;
     }
 
@@ -247,7 +247,16 @@ export class MyRequestsPage extends BasePage {
       .filter(n => !isNaN(n))
       .reduce((best, n) => (n <= size && n > best ? n : best), -1);
 
-    if (bestOption === -1) return false;
+    if (bestOption === -1) {
+      // No option ≤ requested size — select the smallest available instead of returning false.
+      const allNums = options.map(o => parseInt(o.trim(), 10)).filter(n => !isNaN(n)).sort((a, b) => a - b);
+      const smallest = allNums[0];
+      if (smallest === undefined) return false;
+      console.log(`selectClosedRequest: no option ≤ ${size}, selecting smallest available: ${smallest}`);
+      await nativeSelect.selectOption(String(smallest));
+      await this.waitForTableData();
+      return true;
+    }
 
     const currentVal = await nativeSelect.inputValue().catch(() => '');
     if (currentVal === String(bestOption)) return true; // already at desired size
@@ -297,6 +306,13 @@ export class MyRequestsPage extends BasePage {
    * @param requireSingleReviewer - Skip SRs with more than one reviewer chip.
    * @param requireMultiReviewer  - Skip SRs with only one reviewer chip.
    * Both default to false, preserving existing behaviour for all other callers.
+   *
+   * NOTE — prod safety: this method selects the first available UNDER REVIEW SR
+   * with no ownership filter. This is intentional: the production tenant is
+   * a dedicated QA tenant, not a live citizen-facing environment. Running
+   * reject / revision / RAI / conditional flows against it does not affect any
+   * real applicant's permit. If the target environment ever changes to a shared
+   * live tenant this assumption must be revisited.
    */
   async selectActiveRequest(
     requireSingleReviewer = false,

@@ -27,8 +27,13 @@ export class SRDetailPage extends BasePage {
     const heading = this.page.getByRole('heading', { name: 'Status timeline' });
     await expect(heading).toBeVisible({ timeout: 10000 });
 
-    // Allow offcanvas opening animation & timeline content to settle
-    await this.page.waitForTimeout(1500);
+    // Wait for the offcanvas open animation — .show on the panel is the real completion
+    // signal (same pattern as verdict drawer). A fixed sleep is simultaneously too slow
+    // locally and too fast on a loaded CI runner.
+    await this.page.waitForFunction(
+      () => !!document.querySelector('#ta-sr-status-history-panel.show, .offcanvas.show'),
+      { timeout: 10000 },
+    ).catch(() => console.warn('viewStatusHistory: .offcanvas.show not detected within 10s — proceeding.'));
 
     // Target the exact offcanvas close button visible in the DOM:
     // <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
@@ -52,7 +57,7 @@ export class SRDetailPage extends BasePage {
     await heading.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => {
       console.warn('viewStatusHistory: sidebar heading still visible after close attempt.');
     });
-    await this.page.waitForTimeout(1000);
+    // heading.waitFor({ state: 'hidden' }) is the real completion signal — no additional sleep needed.
   }
 
   /** Clicks a named tab on the SR detail page. Tries role="tab" first, falls back to text match. */

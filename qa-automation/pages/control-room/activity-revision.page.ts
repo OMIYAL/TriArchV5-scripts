@@ -308,7 +308,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
           if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) await closeBtn.click();
           await this.page.goBack();
           await this.page.waitForLoadState('domcontentloaded');
-          await myRequestsPage.openNextActiveActivity();
+          const reopened = await myRequestsPage
+            .openNextActiveActivity({ fastFail: true })
+            .catch((navErr: any) => {
+              console.log(`Recovery navigation failed: ${navErr.message}`);
+              return false;
+            });
+          if (!reopened) throw e; // preserve the original failure
         }
       }
 
@@ -540,7 +546,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
           // Required: after goBack() we are on the SR detail page, not the activity page.
           // Without this the retry immediately calls completeGeneralReview()/annotateAndComment()
           // on the detail page, which is guaranteed to fail and points the error at the wrong step.
-          await myRequestsPage.openNextActiveActivity();
+          const reopened = await myRequestsPage
+            .openNextActiveActivity({ fastFail: true })
+            .catch((navErr: any) => {
+              console.log(`Recovery navigation failed: ${navErr.message}`);
+              return false;
+            });
+          if (!reopened) throw e; // preserve the original failure
         }
       }
 
