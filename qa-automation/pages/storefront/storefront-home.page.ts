@@ -12,7 +12,8 @@ export class StorefrontHomePage extends BasePage {
 
     this.servicesLink = page.locator('#MenuItem_Services').first();
     this.aboutUsLink = page.getByRole('link', { name: /About us/i }).first();
-    this.projectNavLink = page.getByRole('link', { name: /^Project$/i }).first();
+    // Stg nav: "Project" — Prod nav: "My Projects"
+    this.projectNavLink = page.getByRole('link', { name: /My Projects|^Project$/i }).first();
   }
 
   async navigate(tenantName: string = (process.env.TENANT_NAME || 'fps')): Promise<void> {

@@ -6,9 +6,13 @@ const { When, Then } = createBdd();
 
 
 When('the user navigates to the Contact page', async ({ page }) => {
-  await page.getByRole('link', { name: /Contact Us/i }).first().click();
+  // Prod nav label: "Contact" — Stg nav label: "Contact Us"
+  // Scope to the banner/nav to avoid picking up the "Contact us" footer link.
+  const navLink = page.locator('header, [role="banner"], nav').getByRole('link', { name: /^Contact/i }).first();
+  await navLink.click();
   await page.waitForLoadState('domcontentloaded');
 });
+
 
 
 When('the user fills in all contact form fields', async ({ page }) => {
@@ -22,12 +26,18 @@ When('the user clicks the {string} button', async ({ page }, btnName: string) =>
 
 
 Then('the contact request is submitted successfully', async ({ page }) => {
-  // FIX: this assertion previously had a .catch() that swallowed failure and just logged a
-  // message — meaning this step could NEVER fail the test, regardless of what the page
-  // actually showed. If the exact text needs updating, that should surface as a real
-  // assertion failure (with a clear diff) so it gets fixed, not silently pass forever.
-  await expect(page.getByText(/Thank you for contacting us|Message received/i)).toBeVisible({ timeout: 15000 });
+  // Stg: "Thank you for contacting us" / "Message received"
+  // Prod: "Message sent" (h3) + "Thanks for reaching out..." (p) — both visible simultaneously.
+  // Target the heading first to avoid strict-mode violation from 2 elements matching.
+  // The .or() fallback catches environments where the confirmation is a <p> not a heading.
+  const CONFIRMATION = /Message sent|Message received|Thank you for contacting us/i;
+  await expect(
+    page.getByRole('heading', { name: CONFIRMATION })
+      .or(page.getByText(CONFIRMATION).first())
+      .first()
+  ).toBeVisible({ timeout: 15000 });
 });
+
 
 Then('the {string} validation message is displayed', async ({ page }, validationMsg: string) => {
   await expect(page.getByText(validationMsg, { exact: true })).toBeVisible({ timeout: 5000 });

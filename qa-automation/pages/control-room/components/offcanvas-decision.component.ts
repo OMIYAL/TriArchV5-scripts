@@ -38,8 +38,13 @@ export class OffcanvasDecisionComponent extends BasePage {
    * Sticky toolbars often intercept normal Playwright clicks on #ActivityVerdictButton, so we
    * force-click first; if the drawer still doesn't open, we scroll clear of the toolbar and
    * retry with a real click rather than bypassing the browser's event dispatch entirely.
+   *
+   * Public (not private): ActivityReviewPage exposes this via openVerdictDrawer() so that
+   * subclasses needing to pre-select a radio before submitDecision() (revision / rejection /
+   * RAI / conditional flows) can open the real, guarded drawer instead of re-implementing
+   * the alreadyOpen check, fallback-button search, and sticky-toolbar retry a second time.
    */
-  private async openDecisionDrawer(): Promise<void> {
+  async openDecisionDrawer(): Promise<void> {
     // FIX (CI double-open race): check for Bootstrap's `.show` class to determine
     // whether the drawer is already open before deciding to re-click the button.
     //
@@ -52,11 +57,15 @@ export class OffcanvasDecisionComponent extends BasePage {
     //  • `.show` is added by Bootstrap only after the open animation completes
     //    and removed at the START of the close sequence — making it the correct,
     //    reliable open-state signal for this app.
-    //  • `isVisible` alone (the original check) returned true mid-open-animation
-    //    in CI/Xvfb, causing openDecisionDrawer() to return early before the
-    //    drawer was interactable, leading to radio selections mid-animation and
-    //    Bootstrap dismissing the offcanvas (treating the click as outside), then
-    //    submitDecision() reopening the drawer and resetting the radio to Approve.
+    //
+    // Why a re-click is harmful (verified from Activity/Index.js:52):
+    //  The drawer is opened through `abp.OffcanvasManager`, which re-fetches the
+    //  `ActivityVerdictDrawer` partial and **replaces the drawer's entire DOM** on
+    //  every `open()` call. Any radio checked before that fetch lands is destroyed,
+    //  and the server re-renders with `firstEnabled` checked — which is exactly the
+    //  "resets to Approve" symptom seen in CI traces.
+    //  (Note: backdrop is `data-bs-backdrop="false"`, so Bootstrap's outside-click
+    //  dismissal mechanism never fires — an earlier comment blaming it was wrong.)
     const alreadyOpen = await this.page.evaluate(() => {
       const el = document.querySelector('#activity-verdict-drawer');
       return !!(el && el.classList.contains('show'));
@@ -171,27 +180,38 @@ export class OffcanvasDecisionComponent extends BasePage {
   }
 
   async submitDecision(decisionName?: string, opts?: { preSelected?: boolean }) {
-    // Both General Review and Fee use #ActivityVerdictButton at the top to open the drawer.
-    // The drawer does NOT auto-open — an explicit click is always needed.
-    await this.openDecisionDrawer();
-
-    // Wait for the decision options to load and render inside the drawer body
-    await this.decisionBody.locator('input[name="VerdictOutcome"], .js-decision-option, label, button, .card')
-      .first()
-      .waitFor({ state: 'attached', timeout: 15000 });
-
-    // If the drawer still shows uncleared-section blockers, close it, clear again, and reopen once.
-    // Issuance can show "Mark All Sections Reviewed" even when auto-criteria (e.g. Report missing)
-    // cannot be cleared from this page — in that case we fall through to an enabled option (Pause).
-    const blockerAlert = this.drawer.locator('.alert, [role="alert"]').filter({ hasText: /blocker|not yet cleared/i }).first();
-    if (await blockerAlert.isVisible({ timeout: 2000 }).catch(() => false)) {
-      const msg = (await blockerAlert.textContent().catch(() => ''))?.trim() || 'sections not yet cleared';
-      console.log(`Drawer shows blockers (${msg}). Closing, re-clearing sections, and reopening...`);
-      await this.drawer.locator('.btn-close').first().click();
-      await this.drawer.waitFor({ state: 'hidden', timeout: 15000 });
-
-      await new GeneralReviewComponent(this.page).markAllCleared();
+    // When the caller pre-selected a radio (revision / rejection / conditional / RAI flows):
+    //   • The drawer was already opened by openVerdictDrawerForPreSelection(), which gated
+    //     on `.show` and waited for #DecisionOptions to be attached.
+    //   • The correct radio was checked and confirmed via toBeChecked() by the caller.
+    //   • Re-opening the drawer here (even if the alreadyOpen guard prevents a re-click)
+    //     introduces the blocker-branch risk: if blockerAlert fires, line 198 calls
+    //     openDecisionDrawer() again → ABP OffcanvasManager re-fetches the partial →
+    //     entire DOM replaced → pre-selected radio wiped → server-default (Approve) submitted.
+    // Skip openDecisionDrawer() and the blocker branch entirely for pre-selected callers.
+    if (!opts?.preSelected) {
+      // Both General Review and Fee use #ActivityVerdictButton at the top to open the drawer.
+      // The drawer does NOT auto-open — an explicit click is always needed.
       await this.openDecisionDrawer();
+
+      // Wait for the decision options to load and render inside the drawer body
+      await this.decisionBody.locator('input[name="VerdictOutcome"], .js-decision-option, label, button, .card')
+        .first()
+        .waitFor({ state: 'attached', timeout: 15000 });
+
+      // If the drawer still shows uncleared-section blockers, close it, clear again, and reopen once.
+      // Issuance can show "Mark All Sections Reviewed" even when auto-criteria (e.g. Report missing)
+      // cannot be cleared from this page — in that case we fall through to an enabled option (Pause).
+      const blockerAlert = this.drawer.locator('.alert, [role="alert"]').filter({ hasText: /blocker|not yet cleared/i }).first();
+      if (await blockerAlert.isVisible({ timeout: 2000 }).catch(() => false)) {
+        const msg = (await blockerAlert.textContent().catch(() => ''))?.trim() || 'sections not yet cleared';
+        console.log(`Drawer shows blockers (${msg}). Closing, re-clearing sections, and reopening...`);
+        await this.drawer.locator('.btn-close').first().click();
+        await this.drawer.waitFor({ state: 'hidden', timeout: 15000 });
+
+        await new GeneralReviewComponent(this.page).markAllCleared();
+        await this.openDecisionDrawer();
+      }
     }
 
     let clicked = false;

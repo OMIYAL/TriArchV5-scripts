@@ -23,8 +23,41 @@ export class SRDetailPage extends BasePage {
     const link = this.page.getByRole('link', { name: 'View status history' });
     await expect(link).toBeVisible();
     await link.click();
-    await expect(this.page.getByRole('heading', { name: 'Status timeline' })).toBeVisible();
-    await this.page.getByRole('button', { name: 'Close' }).click();
+
+    const heading = this.page.getByRole('heading', { name: 'Status timeline' });
+    await expect(heading).toBeVisible({ timeout: 10000 });
+
+    // Wait for the offcanvas open animation — .show on the panel is the real completion
+    // signal (same pattern as verdict drawer). A fixed sleep is simultaneously too slow
+    // locally and too fast on a loaded CI runner.
+    await this.page.waitForFunction(
+      () => !!document.querySelector('#ta-sr-status-history-panel.show, .offcanvas.show'),
+      { timeout: 10000 },
+    ).catch(() => console.warn('viewStatusHistory: .offcanvas.show not detected within 10s — proceeding.'));
+
+    // Target the exact offcanvas close button visible in the DOM:
+    // <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    // inside #ta-sr-status-history-panel / .offcanvas.show
+    const closeBtn = this.page.locator(
+      '#ta-sr-status-history-panel .btn-close, .offcanvas.show .btn-close, button[data-bs-dismiss="offcanvas"]'
+    ).first();
+
+    if (await closeBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await closeBtn.click();
+    } else {
+      const closeByLabel = this.page.getByRole('button', { name: /^Close$/i }).first();
+      if (await closeByLabel.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await closeByLabel.click();
+      } else {
+        await this.page.keyboard.press('Escape');
+      }
+    }
+
+    // Confirm panel is gone and allow closing animation to settle before proceeding
+    await heading.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => {
+      console.warn('viewStatusHistory: sidebar heading still visible after close attempt.');
+    });
+    // heading.waitFor({ state: 'hidden' }) is the real completion signal — no additional sleep needed.
   }
 
   /** Clicks a named tab on the SR detail page. Tries role="tab" first, falls back to text match. */

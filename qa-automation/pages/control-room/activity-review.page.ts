@@ -30,6 +30,17 @@ export class ActivityReviewPage extends BasePage {
   // --- Decision Drawer 
   async submitDecision(decisionName?: string, opts?: { preSelected?: boolean }) { await this.decisionDrawer.submitDecision(decisionName, opts); }
 
+  /**
+   * Opens #activity-verdict-drawer via the shared, guarded implementation (alreadyOpen
+   * check, fallback-button search, jQuery click-handler wait, sticky-toolbar retry).
+   * Exposed to subclasses that need the drawer open BEFORE calling submitDecision() —
+   * e.g. to pre-select a specific radio (revision / rejection / RAI / conditional flows)
+   * — so they don't need a second, independent open-sequence implementation.
+   */
+  protected async openVerdictDrawer(): Promise<void> {
+    await this.decisionDrawer.openDecisionDrawer();
+  }
+
   // --- General Review & Fee Checklist 
 
   async markAllCleared() { await this.generalReview.markAllCleared(); }
@@ -93,7 +104,13 @@ export class ActivityReviewPage extends BasePage {
           if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) await closeBtn.click();
           await this.page.goBack();
           await this.page.waitForLoadState('domcontentloaded');
-          await myRequestsPage.openNextActiveActivity();
+          const reopened = await myRequestsPage
+            .openNextActiveActivity({ fastFail: true })
+            .catch((navErr: any) => {
+              console.log(`Recovery navigation failed: ${navErr.message}`);
+              return false;
+            });
+          if (!reopened) throw e; // preserve the original failure
         }
       }
 
@@ -116,5 +133,4 @@ export class ActivityReviewPage extends BasePage {
       await this.waitForLoaders();
     }
   }
-}
-
+}
