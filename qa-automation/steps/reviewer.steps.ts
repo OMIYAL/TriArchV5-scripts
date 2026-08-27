@@ -8,8 +8,7 @@ const { Given, When, Then } = createBdd();
 
 Given('that the Reviewer is on the Landing page of the portal', async ({ page }) => {
   const portalUrl = process.env.PORTAL_BASE_URL || '';
-  const tenant = process.env.TENANT_NAME || 'fps';
-  await page.goto(`${portalUrl}?__tenant=${tenant}`);
+  await page.goto(portalUrl);
   
   const loginLink = page.getByRole('link', { name: /Log in|Sign in/i }).first();
   await loginLink.waitFor({ state: 'visible', timeout: 15000 });
@@ -18,9 +17,7 @@ Given('that the Reviewer is on the Landing page of the portal', async ({ page })
 
 Given('the Reviewer logs in with valid credentials', async ({ page }) => {
   const authLogin = new AuthLoginPage(page);
-  // Using completeLoginFlow with redirectUrlRegex for ControlRoom
   await authLogin.completeLoginFlow(
-    process.env.TENANT_NAME || 'fps',
     process.env.REVIEWER_USERNAME || '',
     process.env.REVIEWER_PASSWORD || '',
     /ControlRoom/i

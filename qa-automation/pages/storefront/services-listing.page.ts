@@ -12,8 +12,8 @@ export class ServicesListingPage extends BasePage {
   }
 
   /** Opens the services listing directly — avoids unnecessary About Us navigation. */
-  async openListing(tenantName: string = (process.env.TENANT_NAME || '')): Promise<void> {
-    await this.goto('/services', { __tenant: tenantName });
+  async openListing(): Promise<void> {
+    await this.goto('/services');
     await this.waitForServicesLoaded();
   }
 
