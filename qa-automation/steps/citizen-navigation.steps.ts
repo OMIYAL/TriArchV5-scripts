@@ -4,6 +4,7 @@ import { StorefrontHomePage } from '../pages/storefront/storefront-home.page';
 import { ServicesListingPage } from '../pages/storefront/services-listing.page';
 import { MyRequestsPage } from '../pages/storefront/my-requests.page';
 import { SRDetailPage } from '../pages/sr-detail.page';
+import { BasePage } from '../pages/base.page';
 import { scrollFromTop } from '../utils/scroll.helper';
 import { getScenarioState } from '../utils/scenario-state';
 
@@ -110,26 +111,42 @@ Then('all documents should be downloaded successfully', async ({ page }) => {
 });
 
 Then('all pages were successfully visited', async ({ page }) => {
-  // Verifies the final page is not an error/exception page. Each prior navigation step
-  // in this scenario is responsible for its own assertions; this is a final safety net
-  // that catches error pages the app may have silently landed on.
-  //
-  // innerText() is NOT wrapped in .catch() — a timeout or detached-frame error here IS
-  // a genuine test failure (page crashed / never loaded) and must propagate, not be
-  // silently swallowed as an empty string that trivially passes the regex check.
-  const bodyText = await page.locator('body').innerText();
+  // ⚠ ASSUMPTION: this step is safe only in read-only navigation scenarios.
+  // page.reload() below will re-POST/re-submit if used after a form submission,
+  // decision drawer, or any other state-mutating action. Do not wire this step
+  // into a scenario that performs mutations before reaching this point.
 
-  // (?<![\w.,])404(?![\w.,]) matches "404" only when it appears as a standalone token —
-  // not embedded inside a larger number or identifier:
-  //   ✅ matches: "404", "HTTP 404", "Error 404", "404 Not Found"
-  //   ❌ skips:   "36,404 sq ft", "36.404", "REQ404", "SKU404", "$1,404"
+  // ── Layer 1: HTTP response status (deterministic 404/5xx detection) ──────
+  // Reload the current page to capture the actual HTTP status code. Real 404/500/etc.
+  // errors are caught here regardless of error page wording, locale, or template —
+  // no regex matching on the number "404" needed.
   //
-  // Why not \b404\b?  \b fires at any word↔non-word transition; comma is non-word,
-  // so "36,404" satisfies \b at the ,4 boundary — a false positive.
-  // Why not (?<![\d,])404(?!\d)?  Misses period-grouped numbers (36.404) and is
-  // looser than \b for letter-adjacent tokens (REQ404 matches because R∉[\d,]).
-  expect(bodyText, 'Final page appears to be an error/exception page, not real content').not.toMatch(
-    /Internal Server Error|Page not found|(?<![\w.,])404(?![\w.,])|An error occurred while processing your request/i
+  // reload() is typed Promise<Response | null>; a null return (intercepted / cancelled
+  // navigation) is treated as inconclusive — fall through to Layer 2 only.
+  const response = await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+  if (response !== null) {
+    expect(
+      response.status(),
+      `Final page returned HTTP ${response.status()} — expected a 2xx/3xx success status`
+    ).toBeLessThan(400);
+  }
+
+  // Wait for ABP loaders and overlays to clear after the reload before reading
+  // body text — avoids Layer 2 reading a mid-load DOM (loading overlay vs. final content).
+  await new BasePage(page).waitForLoaders();
+
+  // ── Layer 2: Body text phrase check (catches soft-404 / 200-with-error-body) ─
+  // Some apps return HTTP 200 for error pages (SPA fallback, custom handlers).
+  // Check for recognisable error phrases as a secondary safety net.
+  //
+  // Intentionally omits standalone "404" number matching — that caused three
+  // consecutive regressions (4981b2d → f60595b → 59bc11d) as each lookaround
+  // fix broke a different edge case. Real HTTP 404s are handled by Layer 1;
+  // this layer only needs recognisable error phrases.
+  const bodyText = await page.locator('body').innerText();
+  expect(bodyText, 'Final page appears to be an error/exception page').not.toMatch(
+    /Internal Server Error|Page not found|An error occurred while processing your request/i
   );
+
   console.log(`All Storefront pages visited. Final URL: ${page.url()}`);
 });
