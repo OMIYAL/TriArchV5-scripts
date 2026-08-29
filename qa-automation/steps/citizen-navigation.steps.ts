@@ -110,20 +110,26 @@ Then('all documents should be downloaded successfully', async ({ page }) => {
 });
 
 Then('all pages were successfully visited', async ({ page }) => {
-  // FIX: this step previously only console.log'd the URL and asserted nothing — every prior
-  // navigation step in this scenario could have silently failed (e.g. landed on an error page,
-  // or never left the previous page) and this step would still report success. Now it verifies
-  // there's no error/exception page and that the browser actually left the initial landing URL.
-  const bodyText = await page.locator('body').innerText().catch(() => '');
-  // (?<![\d,])404(?!\d) matches a standalone "404" (e.g. a bare heading, "HTTP 404",
-  // "Error 404", "404 Not Found") but NOT numbers embedded inside larger values like
-  // "36,404 sq ft" — the lookbehind rejects 404 when preceded by a digit or comma,
-  // and the lookahead rejects it when followed by a digit.
+  // Verifies the final page is not an error/exception page. Each prior navigation step
+  // in this scenario is responsible for its own assertions; this is a final safety net
+  // that catches error pages the app may have silently landed on.
   //
-  // \b404\b does NOT work here: comma is a non-word character, so \b fires at the
-  // ,4 transition in "36,404" — producing the exact false-positive this guard prevents.
+  // innerText() is NOT wrapped in .catch() — a timeout or detached-frame error here IS
+  // a genuine test failure (page crashed / never loaded) and must propagate, not be
+  // silently swallowed as an empty string that trivially passes the regex check.
+  const bodyText = await page.locator('body').innerText();
+
+  // (?<![\w.,])404(?![\w.,]) matches "404" only when it appears as a standalone token —
+  // not embedded inside a larger number or identifier:
+  //   ✅ matches: "404", "HTTP 404", "Error 404", "404 Not Found"
+  //   ❌ skips:   "36,404 sq ft", "36.404", "REQ404", "SKU404", "$1,404"
+  //
+  // Why not \b404\b?  \b fires at any word↔non-word transition; comma is non-word,
+  // so "36,404" satisfies \b at the ,4 boundary — a false positive.
+  // Why not (?<![\d,])404(?!\d)?  Misses period-grouped numbers (36.404) and is
+  // looser than \b for letter-adjacent tokens (REQ404 matches because R∉[\d,]).
   expect(bodyText, 'Final page appears to be an error/exception page, not real content').not.toMatch(
-    /Internal Server Error|Page not found|(?<![\d,])404(?!\d)|An error occurred while processing your request/i
+    /Internal Server Error|Page not found|(?<![\w.,])404(?![\w.,])|An error occurred while processing your request/i
   );
   console.log(`All Storefront pages visited. Final URL: ${page.url()}`);
 });
