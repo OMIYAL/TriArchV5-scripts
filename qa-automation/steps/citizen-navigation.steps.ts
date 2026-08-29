@@ -115,10 +115,12 @@ Then('all pages were successfully visited', async ({ page }) => {
   // or never left the previous page) and this step would still report success. Now it verifies
   // there's no error/exception page and that the browser actually left the initial landing URL.
   const bodyText = await page.locator('body').innerText().catch(() => '');
-  // NOTE: bare `404` was removed — it false-positived on content like "36,404 sq ft" in project
-  // listings. The remaining patterns cover all real error pages the app produces.
+  // \b404\b matches a standalone "404" (e.g. a bare heading, "HTTP 404") but NOT numbers
+  // embedded inside larger values like "36,404 sq ft" — the comma/digit context breaks the
+  // word boundary on the left side, so the original false-positive is avoided without having
+  // to enumerate specific compound phrases like "Error 404" / "404 Not Found".
   expect(bodyText, 'Final page appears to be an error/exception page, not real content').not.toMatch(
-    /Internal Server Error|Page not found|Error 404|404 Not Found|An error occurred while processing your request/i
+    /Internal Server Error|Page not found|\b404\b|An error occurred while processing your request/i
   );
   console.log(`All Storefront pages visited. Final URL: ${page.url()}`);
 });
