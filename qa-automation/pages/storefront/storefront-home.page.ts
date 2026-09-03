@@ -16,8 +16,8 @@ export class StorefrontHomePage extends BasePage {
     this.projectNavLink = page.getByRole('link', { name: /My Projects|^Project$/i }).first();
   }
 
-  async navigate(tenantName: string = (process.env.TENANT_NAME || 'fps')): Promise<void> {
-    await this.goto('/', { __tenant: tenantName });
+  async navigate(): Promise<void> {
+    await this.goto('/');
     await this.servicesLink.waitFor({ state: 'visible', timeout: 15000 });
   }
 

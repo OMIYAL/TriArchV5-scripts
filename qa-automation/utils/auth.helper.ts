@@ -5,7 +5,6 @@ import { AuthLoginPage } from '../pages/auth-login.page';
 export async function loginToPortal(page: Page, username: string, password: string): Promise<void> {
   const portalUrl = process.env.PORTAL_BASE_URL || '';
   const authUrl = process.env.AUTH_BASE_URL || '';
-  const tenant = process.env.TENANT_NAME || 'fps';
 
   await page.goto(`${authUrl}/connect/endsession`, { waitUntil: 'domcontentloaded' }).catch((e) => { console.log('endsession failed or timeout, continuing', e); });
 
@@ -15,10 +14,10 @@ export async function loginToPortal(page: Page, username: string, password: stri
     try { sessionStorage.clear(); } catch { }
   });
 
-  await page.goto(`${portalUrl}?__tenant=${tenant}`);
+  await page.goto(portalUrl);
   const loginLink = page.getByRole('link', { name: /Log in|Sign in/i }).first();
   await loginLink.waitFor({ state: 'visible', timeout: 20000 });
   await loginLink.click();
 
-  await new AuthLoginPage(page).completeLoginFlow(tenant, username, password, /ControlRoom/i);
+  await new AuthLoginPage(page).completeLoginFlow(username, password, /ControlRoom/i);
 }

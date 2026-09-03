@@ -15,13 +15,13 @@ const { Given, When, Then } = createBdd();
 
 Given('the citizen is on the Storefront home page', async ({ page }) => {
   const storefrontHome = new StorefrontHomePage(page);
-  await storefrontHome.navigate(process.env.TENANT_NAME || '');
+  await storefrontHome.navigate();
 });
 
 Given('the citizen navigates to an available service', async ({ page }) => {
   const state = getScenarioState(page);
   const servicesListing = new ServicesListingPage(page);
-  await servicesListing.openListing(process.env.TENANT_NAME || '');
+  await servicesListing.openListing();
 
   if (process.env.SERVICE_NAME) {
     console.log(`Selecting configured service: ${process.env.SERVICE_NAME}`);
@@ -35,7 +35,6 @@ When('the citizen logs in with valid credentials', async ({ page }) => {
   const state = getScenarioState(page);
   const authLogin = new AuthLoginPage(page);
   await authLogin.completeLoginFlow(
-    process.env.TENANT_NAME || '',
     process.env.CITIZEN_USERNAME || '',
     process.env.CITIZEN_PASSWORD || '',
   );
@@ -44,7 +43,6 @@ When('the citizen logs in with valid credentials', async ({ page }) => {
 
   if (!page.url().includes('/services/Apply') && state.targetServiceUrl) {
     let applyUrl = new URL(state.targetServiceUrl, process.env.STOREFRONT_BASE_URL || '');
-    applyUrl.searchParams.set('__tenant', process.env.TENANT_NAME || '');
     await page.goto(applyUrl.href, { waitUntil: 'domcontentloaded', timeout: 30000 });
   }
 });

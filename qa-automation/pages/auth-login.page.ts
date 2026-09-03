@@ -2,8 +2,6 @@ import { Page, Locator, expect } from '@playwright/test';
 import { BasePage } from './base.page';
 
 export class AuthLoginPage extends BasePage {
-  private readonly switchLink: Locator;
-  private readonly tenantNameInput: Locator;
   private readonly usernameInput: Locator;
   private readonly passwordInput: Locator;
   private readonly rememberMeText: Locator;
@@ -12,45 +10,14 @@ export class AuthLoginPage extends BasePage {
   constructor(page: Page) {
     super(page, (process.env.AUTH_BASE_URL || ''));
 
-    this.switchLink = page.getByRole('link', { name: 'switch' });
-    this.tenantNameInput = page.getByRole('textbox', { name: 'Name', exact: true });
+    // NOTE: switchLink / tenantNameInput removed — the switch-tenant modal no longer exists.
+    // Tenant identity is now determined by the subdomain URL that triggered the OIDC redirect.
     this.usernameInput = page.getByRole('textbox', { name: 'Username', exact: true });
     this.passwordInput = page.getByRole('textbox', { name: 'Password', exact: true });
     this.rememberMeText = page.getByText('Remember me');
     this.loginButton = page.getByRole('button', { name: 'Login' });
   }
 
-  async switchTenant(tenantName: string): Promise<void> {
-    // 1. Click the switch link
-    await this.switchLink.click();
-
-    // 2. CRITICAL FIX: Wait for the modal dialog container to appear first
-    // This ensures the modal animation/rendering has started
-    await this.page.waitForSelector('[role="dialog"]', { state: 'visible', timeout: 10000 })
-      .catch(() => console.log('Dialog role not found, waiting directly for input...'));
-
-    // 3. NOW wait specifically for the Name textbox inside the modal to be visible
-    await this.tenantNameInput.waitFor({ state: 'visible', timeout: 15000 });
-
-    // 4. Clear and fill (doing it directly here to avoid base class timeout issues)
-    await this.tenantNameInput.clear();
-    await this.tenantNameInput.fill(tenantName);
-
-    // 5. Click Save
-    const saveButton = this.page.getByRole('button', { name: 'Save' });
-    await saveButton.click();
-
-    // 6. Wait for "Saving..." text to disappear from the DOM
-    await this.page.waitForFunction(
-      () => !document.body.textContent?.includes('Saving...'),
-      { timeout: 15000 }
-    ).catch(() => {
-      console.log('Warning: Saving timeout - continuing anyway');
-    });
-
-    // 7. Wait for modal to fully close and UI to settle
-    await this.page.waitForTimeout(500);
-  }
 
   async login(username: string, password: string, redirectUrlRegex: RegExp = /storefront|ControlRoom/i): Promise<void> {
     // Wait for login form to be ready
@@ -76,25 +43,14 @@ export class AuthLoginPage extends BasePage {
   }
 
   async completeLoginFlow(
-    tenantName: string,
     username: string,
     password: string,
     redirectUrlRegex: RegExp = /storefront|ControlRoom/i
   ): Promise<void> {
+    // Tenant is resolved server-side from the subdomain URL that triggered the OIDC redirect.
+    // No tenant switching is needed here — the auth page already shows the correct tenant.
     await this.page.waitForLoadState('domcontentloaded');
     await this.usernameInput.waitFor({ state: 'visible', timeout: 30000 });
-
-    // Check if the tenant is already set to the target tenant to avoid redundant modals and timeouts
-    const tenantLabel = this.page.locator('strong');
-    const currentTenant = await tenantLabel.first().textContent().catch(() => '');
-
-    if (currentTenant?.trim().toLowerCase() !== tenantName.toLowerCase()) {
-      if (await this.switchLink.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await this.switchTenant(tenantName);
-      }
-    } else {
-      console.log(`✅ Tenant is already set to "${tenantName}". Skipping switch.`);
-    }
 
     await this.login(username, password, redirectUrlRegex);
 

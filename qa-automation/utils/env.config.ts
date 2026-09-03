@@ -106,6 +106,45 @@ for (const key of ENV_SPECIFIC_KEYS) {
   }
 }
 
+// ── Subdomain URL construction ────────────────────────────────────────────────
+// Tenants are now routed by subdomain (e.g. fps.stg-portal.triarch.ai).
+// .env stores the shared root host (stg-portal.triarch.ai) so that changing
+// only TENANT_NAME is sufficient to target a different tenant — no URL edits
+// elsewhere are needed.
+//
+// This block prepends TENANT_NAME to the hostname of STOREFRONT_BASE_URL and
+// PORTAL_BASE_URL, producing the fully-qualified tenant URL at runtime.
+//
+// AUTH_BASE_URL is intentionally excluded — the auth service lives on the
+// shared host and does NOT use a tenant subdomain.  The tenant context reaches
+// auth automatically via the OIDC ReturnUrl when the browser lands on the
+// tenant subdomain.
+const buildSubdomainUrl = (baseUrl: string | undefined, tenant: string): string | undefined => {
+  if (!baseUrl || !tenant) return baseUrl;
+  try {
+    const url = new URL(baseUrl);
+    if (!url.hostname.startsWith(`${tenant}.`)) {
+      url.hostname = `${tenant}.${url.hostname}`;
+    }
+    return url.origin; // callers append their own paths; strip trailing slash / any path fragment
+  } catch {
+    console.warn(`[env] Could not parse base URL for subdomain construction: ${baseUrl}`);
+    return baseUrl;
+  }
+};
+
+const resolvedTenant = process.env.TENANT_NAME || '';
+if (resolvedTenant) {
+  if (!isBlank(process.env.STOREFRONT_BASE_URL)) {
+    process.env.STOREFRONT_BASE_URL = buildSubdomainUrl(process.env.STOREFRONT_BASE_URL, resolvedTenant);
+  }
+  if (!isBlank(process.env.PORTAL_BASE_URL)) {
+    process.env.PORTAL_BASE_URL = buildSubdomainUrl(process.env.PORTAL_BASE_URL, resolvedTenant);
+  }
+} else {
+  console.warn('[env] TENANT_NAME is unset — subdomain URLs will NOT be constructed. Tests will target the shared host.');
+}
+
 // ── Fail-fast validation ─────────────────────────────────────────────────────
 // If the critical URL keys are still blank after resolution, fail immediately
 // with a clear message rather than letting tests fail later with "relative URL"
