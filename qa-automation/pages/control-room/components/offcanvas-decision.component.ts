@@ -179,7 +179,7 @@ export class OffcanvasDecisionComponent extends BasePage {
     }
   }
 
-  async submitDecision(decisionName?: string, opts?: { preSelected?: boolean }) {
+  async submitDecision(decisionName?: string, opts?: { preSelected?: boolean; verifyLocator?: Locator }) {
     // When the caller pre-selected a radio (revision / rejection / conditional / RAI flows):
     //   • The drawer was already opened by openVerdictDrawerForPreSelection(), which gated
     //     on `.show` and waited for #DecisionOptions to be attached.
@@ -226,15 +226,24 @@ export class OffcanvasDecisionComponent extends BasePage {
     // If the caller explicitly pre-selected a radio via data-decision (e.g. revision / rejection /
     // conditional flows), honour that selection — skip the fee and approve fallbacks entirely.
     //
-    // IMPORTANT: do NOT infer this from input[name="VerdictOutcome"]:checked — the server
-    // always pre-checks the first enabled option (ActivityVerdictDrawer.cshtml:65), so
-    // :checked is truthy on every render, and the implicit check would skip the fee-waive
-    // and positive-outcome fallbacks for every caller that passes no decisionName.
+    // IMPORTANT: use verifyLocator (the exact radio the caller checked) rather than the generic
+    // input[name="VerdictOutcome"]:checked. The server always pre-checks firstEnabled (Approve)
+    // on every render, so :checked is truthy regardless of whether the CORRECT radio is selected.
+    // verifyLocator.toBeChecked() is the last line of defence right before the submit click.
     if (!clicked && opts?.preSelected) {
-      await expect(
-        this.drawer.locator('input[name="VerdictOutcome"]:checked')
-      ).toHaveCount(1, { timeout: 5000 });
-      console.log('Radio pre-selected by caller — skipping selection fallback and submitting as-is.');
+      if (opts.verifyLocator) {
+        // Verify the SPECIFIC radio the caller pre-selected is still checked just before clicking
+        // Submit. Any DOM reset (e.g. ABP async re-render, notes-fill side-effect) that wiped
+        // the pre-selection will be caught here as a loud failure — not a silent wrong-verdict.
+        await expect(opts.verifyLocator).toBeChecked({ timeout: 5000 });
+        console.log('Specific pre-selected radio confirmed still checked — submitting.');
+      } else {
+        // Fallback for callers that have not yet been updated to pass verifyLocator.
+        await expect(
+          this.drawer.locator('input[name="VerdictOutcome"]:checked')
+        ).toHaveCount(1, { timeout: 5000 });
+        console.log('Radio pre-selected by caller — skipping selection fallback and submitting as-is.');
+      }
       clicked = true;
     }
 

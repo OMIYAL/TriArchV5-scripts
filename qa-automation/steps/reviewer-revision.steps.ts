@@ -1,6 +1,7 @@
 import { createBdd } from 'playwright-bdd';
 import { expect, type Page } from '@playwright/test';
 import { ActivityRevisionPage } from '../pages/control-room/activity-revision.page';
+import { ActivityReviewPage } from '../pages/control-room/activity-review.page';
 import { MyRequestsPage } from '../pages/storefront/my-requests.page';
 import { getScenarioState } from '../utils/scenario-state';
 import { waitForTableData, waitForFilteredTableData } from '../utils/table.helper';
@@ -16,6 +17,23 @@ When('the Reviewer selects a Service Request and triggers the Document Review re
   const myRequestsPage = new MyRequestsPage(page);
   const activityRevisionPage = new ActivityRevisionPage(page);
   await activityRevisionPage.selectAndTriggerRevision(myRequestsPage);
+});
+
+/**
+ * Post-correction variant of "the Reviewer processes all active activities".
+ *
+ * Once a citizen has resubmitted, reopening the document step loads the ORIGINAL submittal —
+ * already reviewed in the first round — so the wizard opens on the Verify tab and the revised
+ * PDF never gets reviewed. This variant switches review to the most recent resubmitted document
+ * first, via the Submittal documents panel.
+ *
+ * Kept as a separate step from the plain one so reviewer-workflow.feature, which has no
+ * correction round, keeps its existing behaviour untouched.
+ */
+When('the Reviewer processes all active activities starting from the revised document', async ({ page }) => {
+  const myRequestsPage = new MyRequestsPage(page);
+  const activityReviewPage = new ActivityReviewPage(page);
+  await activityReviewPage.processActivities(myRequestsPage, 10, { switchToRevisedDocument: true });
 });
 
 /**

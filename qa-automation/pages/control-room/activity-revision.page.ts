@@ -159,13 +159,17 @@ export class ActivityRevisionPage extends ActivityReviewPage {
           await notesInput.fill(`Automation Revision Note: ${faker.lorem.sentence()}`);
         }
 
-        // 5. Submit — the "Needs revision" radio is already checked (confirmed by toBeChecked()
-        //    above). Calling submitDecision() WITHOUT a decisionName so it does not try to
-        //    re-select by label text (which can deselect the pre-checked radio if the text match
-        //    lands on a parent element, causing the fallback to silently submit "Approve" instead).
-        //    The checked-radio guard at line 206 of submitDecision() still confirms a radio IS
-        //    selected before clicking #SubmitVerdictButton.
-        await this.submitDecision(undefined, { preSelected: true });
+        // 4b. Re-confirm the revision radio is still the checked option after the notes fill.
+        //     The async fill() is the last DOM interaction before submitDecision() — a CI race
+        //     where ABP re-renders the drawer during the fill could reset the radio to the
+        //     server-default (Approve). Catching it here produces a loud, actionable failure
+        //     rather than a silent wrong-verdict submission.
+        await expect(revisionInput).toBeChecked({ timeout: 3000 });
+
+        // 5. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC revision
+        //    radio (not just "some radio") is still checked immediately before clicking
+        //    #SubmitVerdictButton. This is the final guard against a reset-to-Approve race.
+        await this.submitDecision(undefined, { preSelected: true, verifyLocator: revisionInput });
         console.log('First document review step marked for revision. Halting further processing.');
       },
     );
@@ -230,10 +234,10 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         // The old block cost a 3s isVisible timeout every run for coverage that never existed.
 
         // 3. Submit — drawer is already open and Reject option already selected via data-decision.
-        //    Calling submitDecision() WITHOUT a decisionName so it does not try to re-select
-        //    by label text (same race as the revision path above). The checked-radio guard
-        //    in submitDecision() confirms the radio is still checked before submitting.
-        await this.submitDecision(undefined, { preSelected: true });
+        //    Pass verifyLocator so submitDecision() re-asserts the SPECIFIC reject radio is still
+        //    checked immediately before clicking #SubmitVerdictButton. No notes fill on this path
+        //    so there is no additional gap between toBeChecked() above and the submit call.
+        await this.submitDecision(undefined, { preSelected: true, verifyLocator: rejectInput });
         console.log('First document review step rejected. Halting further processing.');
       },
     );
@@ -506,10 +510,14 @@ export class ActivityRevisionPage extends ActivityReviewPage {
               await notesInput.fill(`Automation Return as Incomplete Note: ${faker.lorem.sentence()}`);
             }
 
-            // 5. Submit — radio already pre-selected and confirmed via toBeChecked() above.
-            //    submitDecision() with { preSelected: true } honours the pre-checked radio
-            //    and skips the fee/approve fallbacks, same as the revision/rejection paths.
-            await this.submitDecision(undefined, { preSelected: true });
+            // 4b. Re-confirm the return radio is still checked after the notes fill.
+            //     Same reasoning as the revision path: the async fill() introduces a race window
+            //     where ABP could re-render the drawer and reset the radio to Approve.
+            await expect(returnInput).toBeChecked({ timeout: 3000 });
+
+            // 5. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC
+            //    return-as-incomplete radio is still checked immediately before clicking Submit.
+            await this.submitDecision(undefined, { preSelected: true, verifyLocator: returnInput });
             console.log('General Review step marked as Return as Incomplete. Halting further processing.');
             return true; // submitDecision() already handled the redirect; exit immediately.
 
@@ -660,11 +668,15 @@ export class ActivityRevisionPage extends ActivityReviewPage {
           await notesInput.fill('Conditional approval — subject to outstanding conditions being met.');
         }
 
-        // 4. Submit — drawer open, Conditional radio pre-checked via data-decision.
-        //    Pass { preSelected: true } so submitDecision() honours the pre-checked radio
-        //    and does not run the fee/approve fallbacks (which would fire because the server
-        //    also pre-checks a different option on every render, making :checked always truthy).
-        await this.submitDecision(undefined, { preSelected: true });
+        // 3b. Re-confirm the conditional radio is still checked after the notes fill.
+        //     The async fill() is the last DOM interaction before submitDecision() and introduces
+        //     a race window where ABP could re-render the drawer and reset the radio to Approve.
+        await expect(conditionalInput).toBeChecked({ timeout: 3000 });
+
+        // 4. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC conditional
+        //    radio (data-decision="1") is still checked immediately before clicking #SubmitVerdictButton.
+        //    This is the final guard against a reset-to-Approve race on slow CI runners.
+        await this.submitDecision(undefined, { preSelected: true, verifyLocator: conditionalInput });
         console.log('Document review step conditionally approved. Handing off to processActivities...');
       },
     );

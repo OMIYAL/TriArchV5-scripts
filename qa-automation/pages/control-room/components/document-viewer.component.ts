@@ -1,4 +1,4 @@
-import { Page, Locator } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 import { BasePage } from '../../base.page';
 import { faker } from '@faker-js/faker';
 
@@ -34,6 +34,92 @@ export class DocumentViewerComponent extends BasePage {
       }
     }
     return null;
+  }
+
+  /**
+   * After a citizen resubmits corrections, reopening the document step lands on the ORIGINAL
+   * submittal — whose review was already completed in the first round — so the wizard opens
+   * straight on the Verify tab and the revised PDF is never reviewed.
+   *
+   * This opens the Submittal documents panel, finds the resubmitted document, and clicks its
+   * "Switch review to this document" action. That navigates to `…&stage=review&documentId=…`,
+   * which reopens the wizard on the Review tab with the revised PDF loaded. The offcanvas
+   * closes itself as part of that navigation — no explicit dismissal needed.
+   *
+   * Selectors below are all taken from the live DOM (DevTools inspection of the activity page
+   * and the documents offcanvas), not inferred:
+   *   #btn-service-request-documents                  — right-rail folder button
+   *   #DocumentsPanelList                             — the offcanvas list container
+   *   .ta-activity-step--document                     — one document row
+   *   span.badge[title="CorrectionVersionHint"]       — round marker, text "R1", "R2", …
+   *   a.ta-activity-step__action                      — "Switch review to this document"
+   *
+   * Fail-soft by design: every miss logs and returns false so the caller proceeds exactly as it
+   * does today. A correction round does not always produce a revised DOCUMENT (an RAI round
+   * returns a General Review step instead), so "no revised document" is a legitimate outcome,
+   * not an error.
+   *
+   * @returns true if the review was switched to a revised document.
+   */
+  async switchToRevisedDocument(): Promise<boolean> {
+    // The app duplicates the entire toolbar block, so #btn-service-request-documents appears
+    // TWICE in the DOM — once in the user-menu <ul> (element 0) and once in the right-rail
+    // toolbar (element 1). Every parent-class selector has the same issue because the container
+    // classes are duplicated too. Playwright's strict-mode error confirms the toolbar button
+    // is always the SECOND element, so .nth(1) is the stable, container-agnostic fix.
+    const docsBtn = this.page.locator('#btn-service-request-documents').nth(1);
+    await docsBtn.waitFor({ state: 'visible', timeout: 10000 });
+
+    console.log('[revised-doc] Opening Submittal documents panel to look for a resubmitted document...');
+    await docsBtn.click();
+
+    // .first() for the same duplicate-id reason as the button above.
+    const panel = this.page.locator('#DocumentsPanelList').first();
+    await panel.waitFor({ state: 'visible', timeout: 15000 });
+
+    // Each revised document carries a round badge: R1 for the first correction round, R2 for
+    // the second, and so on. Pick the highest round — that is the most recent resubmission.
+    const badges = panel.locator('.ta-activity-step--document span.badge[title="CorrectionVersionHint"]');
+    const badgeCount = await badges.count().catch(() => 0);
+    if (badgeCount === 0) {
+      throw new Error('[revised-doc] No document carries a correction-round badge — cannot switch to revised document. Check badge selector or SR state.');
+    }
+
+    let bestRound = -1;
+    let bestIndex = -1;
+    for (let i = 0; i < badgeCount; i++) {
+      const label = (await badges.nth(i).textContent().catch(() => ''))?.trim() ?? '';
+      const round = Number(label.match(/^R(\d+)$/i)?.[1] ?? NaN);
+      if (Number.isNaN(round)) {
+        console.log(`[revised-doc] Ignoring unparseable round badge "${label}".`);
+        continue;
+      }
+      if (round > bestRound) {
+        bestRound = round;
+        bestIndex = i;
+      }
+    }
+
+    if (bestIndex === -1) {
+      throw new Error(`[revised-doc] Found ${badgeCount} round badge(s) but none matched the expected "R<number>" format.`);
+    }
+
+    // The ARIA snapshot confirms the switch link has no aria-label in the accessibility tree —
+    // it's an anonymous link identified only by its href. The href always contains both
+    // "stage=review" and "documentId=" which is unique to the "Switch review to this document"
+    // action inside this panel. Match on that href pattern directly.
+    const switchLink = panel.locator('a[href*="stage=review"][href*="documentId="]').first();
+    await switchLink.waitFor({ state: 'visible', timeout: 10000 });
+
+    console.log(`[revised-doc] Switching review to the R${bestRound} (most recent) resubmitted document...`);
+    await switchLink.click();
+
+    // The switch navigates to ?…&stage=review&documentId=…, which reopens the wizard on the
+    // Review tab. Waiting on the URL is the app's own confirmation that the switch took effect.
+    await this.page.waitForURL(/stage=review/i, { timeout: 30000, waitUntil: 'domcontentloaded' });
+    await this.waitForLoaders();
+    console.log('[revised-doc] Review switched — wizard reopened on the Review tab with the revised document.');
+    return true;
   }
 
   async waitForDocumentToLoad(viewerLocator: Locator, expectedSelectorDescription: string, expectedSelectorWaiter: () => Promise<void>) {
@@ -80,6 +166,7 @@ export class DocumentViewerComponent extends BasePage {
     ).catch(() => false);
   }
 
+
   async annotateAndComment() {
     const documentViewer = await this.getDocumentViewer();
     // Check if the viewer exists in the DOM at all (to identify if this is a document/plan review step)
@@ -96,11 +183,22 @@ export class DocumentViewerComponent extends BasePage {
     console.log('Document viewer ready.');
 
     const circleButton = this.page.getByRole('button', { name: 'Circle' });
-    await this.waitForDocumentToLoad(
-      documentViewer,
-      'Circle button',
-      async () => { await circleButton.waitFor({ state: 'visible', timeout: 15000 }); }
-    );
+
+    // Guard: the Circle annotation tool only exists on the Review tab. If this activity was
+    // partially processed by an earlier run it can open on the Report or Verify tab instead,
+    // where waiting for Circle can only ever time out.
+    //
+    // Uses waitFor() rather than isVisible({ timeout }) — isVisible()'s timeout option is
+    // @deprecated and ignored in Playwright 1.59.1, so it would be a zero-wait snapshot and
+    // would skip annotation on any viewer that renders even slightly late.
+    const reviewTabReady = await circleButton.waitFor({ state: 'visible', timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!reviewTabReady) {
+      console.log('Review tab annotation toolbar (Circle button) not found — treating the Review tab as already completed and skipping annotation.');
+      return;
+    }
 
     await circleButton.click();
     // FIX: replaced fixed 1500ms "let tool state bind" sleep with an explicit wait for the
@@ -211,13 +309,28 @@ export class DocumentViewerComponent extends BasePage {
     await this.waitForLoaders();
     await stampTool.click({ timeout: 10000 });
 
-    const dynamicOption = this.page.getByText('Dynamic', { exact: true }).first()
-      .or(this.page.getByRole('menuitem', { name: 'Dynamic' }).first());
+    // The stamp dropdown renders its options as <li role="menuitem">. Prefer that role and fall
+    // back to a text match only when no menuitem exists.
+    //
+    // FIX: these were `a.first().or(b.first())`, which is a UNION of two single-element
+    // locators — when both sides match, the combined locator resolves to 2 elements and
+    // waitFor() throws a strict-mode violation. That is what failed this step: the verdict
+    // drawer (#DecisionOptions) contains its own "Approved" label
+    // (<span class="ta-activity-step__title">Approved</span>) alongside the stamp menu's
+    // <li id="stamp:dynamic:Approved">Approved</li>. Resolving the menuitem first also picks
+    // the correct element — a plain `.or(...).first()` would take whichever comes first in DOM
+    // order, which can be the drawer's label rather than the stamp option.
+    const pickStampOption = async (name: string) => {
+      const menuItem = this.page.getByRole('menuitem', { name, exact: true }).first();
+      if (await menuItem.count().catch(() => 0) > 0) return menuItem;
+      return this.page.getByText(name, { exact: true }).first();
+    };
+
+    const dynamicOption = await pickStampOption('Dynamic');
     await dynamicOption.waitFor({ state: 'visible', timeout: 5000 });
     await dynamicOption.click({ timeout: 5000 });
 
-    const approvedOption = this.page.getByText('Approved', { exact: true }).first()
-      .or(this.page.getByRole('menuitem', { name: 'Approved', exact: true }).first());
+    const approvedOption = await pickStampOption('Approved');
     await approvedOption.waitFor({ state: 'visible', timeout: 5000 });
     await approvedOption.click({ timeout: 5000 });
 
