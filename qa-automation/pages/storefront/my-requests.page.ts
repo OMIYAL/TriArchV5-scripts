@@ -33,7 +33,8 @@ export class MyRequestsPage extends BasePage {
       // Absolute URL — this method is called from both portal-auth-setup (baseURL=PORTAL)
       // and e2e-full-flow (baseURL=STOREFRONT) projects. A relative URL would resolve
       // against the wrong host in the e2e case.
-      const portalUrl = process.env.PORTAL_BASE_URL || '';
+      // PORTAL_BASE_URL is guaranteed non-blank by env.config.ts startup validation.
+      const portalUrl = process.env.PORTAL_BASE_URL!;
       await this.page.goto(`${portalUrl}/ControlRoom/ServiceRequests`, { waitUntil: 'domcontentloaded' });
     }
     await this.page.waitForURL(/ServiceRequests/i, { timeout: 30000, waitUntil: 'domcontentloaded' });

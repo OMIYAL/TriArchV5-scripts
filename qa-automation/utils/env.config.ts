@@ -149,7 +149,7 @@ if (resolvedTenant) {
 // If the critical URL keys are still blank after resolution, fail immediately
 // with a clear message rather than letting tests fail later with "relative URL"
 // errors or with baseURL: undefined in playwright.config.ts.
-const REQUIRED = ['STOREFRONT_BASE_URL', 'AUTH_BASE_URL', 'TENANT_NAME'] as const;
+const REQUIRED = ['STOREFRONT_BASE_URL', 'PORTAL_BASE_URL', 'AUTH_BASE_URL', 'TENANT_NAME'] as const;
 const missing = REQUIRED.filter(k => isBlank(process.env[k]));
 if (missing.length) {
   throw new Error(
