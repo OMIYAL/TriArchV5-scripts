@@ -34,7 +34,11 @@ export default defineConfig({
 
   use: {
     actionTimeout: 15000,
-    trace: 'on-first-retry',
+    // 'retain-on-failure' rather than 'on-first-retry': retries are 0 locally (see above), so
+    // 'on-first-retry' never produced a trace on a developer machine — a local failure left only
+    // a video and an error-context file to work from, on tests that run 4-12 minutes each.
+    // Traces are written only for failures, so passing runs pay nothing.
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
 
@@ -63,6 +67,7 @@ export default defineConfig({
       testMatch: ['**/tests/setup/**/*.setup.ts', '**/features/control-room/**/*.feature.spec.js'],
       use: {
         headless: true, // auth setup runs invisibly — no browser window shown
+        baseURL: process.env.PORTAL_BASE_URL,
       },
     },
 

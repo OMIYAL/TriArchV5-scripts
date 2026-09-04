@@ -36,5 +36,5 @@ Feature: Reviewer sends a document review step back for revision and citizen res
     When the Reviewer navigates to the Service Requests page
     And the Reviewer selects the Service Request for the current tracking ID which is in "UNDER REVIEW"
     Then the Reviewer gets redirected to the Specific Request
-    When the Reviewer processes all active activities
+    When the Reviewer processes all active activities starting from the revised document
     Then the status of the service request should be "Closed"
