@@ -79,11 +79,7 @@ export class DocumentViewerComponent extends BasePage {
 
     // Each revised document carries a round badge: R1 for the first correction round, R2 for
     // the second, and so on. Pick the highest round — that is the most recent resubmission.
-    //
-    // Rows and badges share the same index: badges.nth(i) is always the badge inside
-    // rows.nth(i). We locate rows once here so bestIndex can be used to scope the click target.
-    const rows = panel.locator('.ta-activity-step--document');
-    const badges = rows.locator('span.badge[title="CorrectionVersionHint"]');
+    const badges = panel.locator('.ta-activity-step--document span.badge[title="CorrectionVersionHint"]');
     const badgeCount = await badges.count().catch(() => 0);
     if (badgeCount === 0) {
       // Fail-soft: a correction round does not always produce a revised DOCUMENT — an RAI round
@@ -117,10 +113,16 @@ export class DocumentViewerComponent extends BasePage {
       return false;
     }
 
-    // Fix 1: scope the switch link to the specific row we picked (bestIndex), not the first
-    // link anywhere in the panel. Without this scoping, the R1-vs-R2 computation above is dead
-    // code — .first() would always click whichever row renders first in DOM order.
-    const bestRow = rows.nth(bestIndex);
+    // Fix 1: scope the switch link to the row belonging to the winning badge, not the first
+    // link anywhere in the panel. Derived from the badge itself (ancestor traversal) rather
+    // than a separately-counted `rows` locator indexed by bestIndex — `badges` is a flattened
+    // cross-row locator, so its index only lines up with a `rows` locator's index when every
+    // row has exactly one badge. A badge-less row (e.g. the original, unrevised submittal
+    // sitting alongside resubmissions) would silently break that alignment and click the wrong
+    // document — the very bug this scoping exists to prevent, just relocated.
+    const bestRow = badges.nth(bestIndex)
+      .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " ta-activity-step--document ")]')
+      .first();
     const switchLink = bestRow.locator('a[href*="stage=review"][href*="documentId="]').first();
     await switchLink.waitFor({ state: 'visible', timeout: 10000 });
 
