@@ -235,7 +235,7 @@ export class OffcanvasDecisionComponent extends BasePage {
         // Verify the SPECIFIC radio the caller pre-selected is still checked just before clicking
         // Submit. Any DOM reset (e.g. ABP async re-render, notes-fill side-effect) that wiped
         // the pre-selection will be caught here as a loud failure — not a silent wrong-verdict.
-        await expect(opts.verifyLocator).toBeChecked({ timeout: 5000 });
+        await expect(opts.verifyLocator).toBeChecked({ timeout: 8000 });
         console.log('Specific pre-selected radio confirmed still checked — submitting.');
       } else {
         // Fallback for callers that have not yet been updated to pass verifyLocator.

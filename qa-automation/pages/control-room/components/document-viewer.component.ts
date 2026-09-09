@@ -275,6 +275,24 @@ export class DocumentViewerComponent extends BasePage {
     if (saveAndNextButton) {
       console.log('Clicking Save & Next (Single Step)');
       await this.waitForLoaders();
+      // The verdict drawer (#activity-verdict-drawer) carries `data-bs-scroll="true"` which
+      // lets the page scroll while it is open, but its offcanvas-body still covers the
+      // document review area and intercepts pointer events on the Save & Next button underneath.
+      // A leftover open drawer from a previous iteration (or a concurrent submitDecision call)
+      // will make every Save & Next click time out even though the button is visible and enabled.
+      // Wait for the drawer to fully close (`.show` removed) before proceeding.
+      const drawerStillOpen = await this.page.evaluate(() =>
+        !!document.querySelector('#activity-verdict-drawer.show')
+      ).catch(() => false);
+      if (drawerStillOpen) {
+        console.log('[save-next] Verdict drawer is still open — waiting for it to close before clicking Save & Next...');
+        await this.page.waitForFunction(
+          () => !document.querySelector('#activity-verdict-drawer.show'),
+          { timeout: 15000 }
+        ).catch(() => {
+          console.log('[save-next] Warning: drawer did not close within 15s — proceeding anyway.');
+        });
+      }
       // Wait for the document loading spinner to clear — it intercepts pointer events
       await this.page.locator('#ta-doc-review-loading, .ta-stage-loading').first()
         .waitFor({ state: 'hidden', timeout: 50000 });

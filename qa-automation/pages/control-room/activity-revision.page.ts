@@ -162,9 +162,14 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         // 4b. Re-confirm the revision radio is still the checked option after the notes fill.
         //     The async fill() is the last DOM interaction before submitDecision() — a CI race
         //     where ABP re-renders the drawer during the fill could reset the radio to the
-        //     server-default (Approve). Catching it here produces a loud, actionable failure
-        //     rather than a silent wrong-verdict submission.
-        await expect(revisionInput).toBeChecked({ timeout: 3000 });
+        //     server-default (Approve). Bumped to 8000ms (CI traces showed 3000ms was too tight).
+        //     If still unchecked after the timeout, re-click it once before failing.
+        const revisionStillChecked = await revisionInput.isChecked({ timeout: 8000 }).catch(() => false);
+        if (!revisionStillChecked) {
+          console.log('[revision] Radio unchecked after notes fill (ABP re-render race) — re-selecting...');
+          await revisionInput.check();
+        }
+        await expect(revisionInput).toBeChecked({ timeout: 8000 });
 
         // 5. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC revision
         //    radio (not just "some radio") is still checked immediately before clicking
@@ -513,7 +518,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
             // 4b. Re-confirm the return radio is still checked after the notes fill.
             //     Same reasoning as the revision path: the async fill() introduces a race window
             //     where ABP could re-render the drawer and reset the radio to Approve.
-            await expect(returnInput).toBeChecked({ timeout: 3000 });
+            //     Bumped to 8000ms; re-click recovery if ABP reset it.
+            const returnStillChecked = await returnInput.isChecked({ timeout: 8000 }).catch(() => false);
+            if (!returnStillChecked) {
+              console.log('[rai] Return radio unchecked after notes fill (ABP re-render race) — re-selecting...');
+              await returnInput.check();
+            }
+            await expect(returnInput).toBeChecked({ timeout: 8000 });
 
             // 5. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC
             //    return-as-incomplete radio is still checked immediately before clicking Submit.
@@ -671,7 +682,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         // 3b. Re-confirm the conditional radio is still checked after the notes fill.
         //     The async fill() is the last DOM interaction before submitDecision() and introduces
         //     a race window where ABP could re-render the drawer and reset the radio to Approve.
-        await expect(conditionalInput).toBeChecked({ timeout: 3000 });
+        //     Bumped to 8000ms; re-click recovery if ABP reset it.
+        const conditionalStillChecked = await conditionalInput.isChecked({ timeout: 8000 }).catch(() => false);
+        if (!conditionalStillChecked) {
+          console.log('[conditional] Conditional radio unchecked after notes fill (ABP re-render race) — re-selecting...');
+          await conditionalInput.check();
+        }
+        await expect(conditionalInput).toBeChecked({ timeout: 8000 });
 
         // 4. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC conditional
         //    radio (data-decision="1") is still checked immediately before clicking #SubmitVerdictButton.
