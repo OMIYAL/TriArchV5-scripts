@@ -326,6 +326,9 @@ export class MyRequestsPage extends BasePage {
   ): Promise<void> {
     await this.navigateReloadAndScroll();
     const visited = new Set<string>();
+    // Counts candidates opened and then rejected by actionFn, so the final error can tell
+    // "no candidates existed" apart from "every candidate was unsuitable".
+    let declinedCount = 0;
     // Tracks whether the "Under Review" filter pill has been applied.
     // setTablePageSize(50) runs:
     //  (a) at the top of scanAndSelect() on the very first filtered scan pass, and
@@ -395,9 +398,10 @@ export class MyRequestsPage extends BasePage {
         if (actionFn) {
           const success = await actionFn(href);
           if (success) {
-            console.log(`  ✅ Action successfully triggered in SR: ${href}`);
+            console.log(`  ✅ [scanner] Accepted SR: ${href} (after ${declinedCount} declined candidate(s))`);
             return true;
           }
+          declinedCount++;
           console.log(`  ⏭ Action declined in SR (${href}). Going back...`);
           // actionFn may have navigated deep into activities; navigate back directly.
           await this.navigateReloadAndScroll();
@@ -436,12 +440,25 @@ export class MyRequestsPage extends BasePage {
       if (await scanAndSelect()) return;
     }
 
+    // Distinguish "there were no candidates" from "there were candidates but every one was
+    // rejected by the predicate". The latter almost always means the staging tenant is full of
+    // part-processed SRs — say so, instead of leaving it to look like a selector problem.
+    if (declinedCount > 0) {
+      throw new Error(
+        `No usable UNDER REVIEW service request found: ${visited.size} candidate(s) were opened and ` +
+        `${declinedCount} were rejected by the selection predicate. ` +
+        'If the [stale-guard] lines above account for these, every candidate already had a final ' +
+        'report generated on its document review — i.e. its wizard is past the Review stage. ' +
+        'The staging tenant needs those stale service requests cleared, or a fresh SR created for this scenario.'
+      );
+    }
+
     throw new Error(
       requireSingleReviewer
-        ? 'No single-reviewer UNDER REVIEW service request found (or action predicate failed).'
+        ? 'No single-reviewer UNDER REVIEW service request found (none matched the single-reviewer filter).'
         : requireMultiReviewer
-          ? 'No multi-reviewer UNDER REVIEW service request found (or action predicate failed).'
-          : 'No service requests found with status UNDER REVIEW (or action predicate failed).'
+          ? 'No multi-reviewer UNDER REVIEW service request found (none matched the multi-reviewer filter).'
+          : 'No service requests found with status UNDER REVIEW.'
     );
   }
 

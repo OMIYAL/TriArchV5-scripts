@@ -86,6 +86,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
       if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
         return false;
       }
+      // Stale guard: a document review that already has a final report is past the Review
+      // stage, so the fixed pipeline would over-run on it. Skip and let the scanner try the
+      // next SR. See ActivityReviewPage.documentReviewHasFinalReport().
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
+        return false;
+      }
       return this.processUntilFirstDocumentRevision(myRequestsPage);
     });
   }
@@ -193,6 +200,11 @@ export class ActivityRevisionPage extends ActivityReviewPage {
     await myRequestsPage.selectActiveRequest(true, false, async () => {
       const docReviewStatus = await this.getDocumentReviewStatus();
       if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
+        return false;
+      }
+      // Stale guard — see the revision flow above.
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
         return false;
       }
       return this.processUntilFirstDocumentRejection(myRequestsPage);
@@ -418,6 +430,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
       if (generalReviewStatus === 'not-found' || generalReviewStatus === 'done') {
         return false;
       }
+      // Stale guard: this flow targets a General Review step, but its loop also processes any
+      // Document Review step it meets on the way (see the isDocumentStep() branch below). A
+      // part-processed one would over-run the pipeline there just the same, so skip the SR.
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
+        return false;
+      }
       return this.processUntilFirstGeneralReviewReturnAsIncomplete(myRequestsPage);
     });
   }
@@ -617,6 +636,11 @@ export class ActivityRevisionPage extends ActivityReviewPage {
       const docReviewStatus = await this.getDocumentReviewStatus();
       if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
         return false; // Skip — no pending doc step here
+      }
+      // Stale guard — see the revision flow above.
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
+        return false;
       }
       return this.processAllWithConditionalDocStep(myRequestsPage);
     });
