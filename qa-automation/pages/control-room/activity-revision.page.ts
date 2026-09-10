@@ -71,6 +71,37 @@ export class ActivityRevisionPage extends ActivityReviewPage {
     return this.page.locator('#activity-verdict-drawer');
   }
 
+  /**
+   * Selects a verdict radio and confirms the selection actually stuck.
+   *
+   * ABP's OffcanvasManager replaces the drawer's entire DOM whenever the partial is re-fetched.
+   * When that lands just after a radio is checked, the server re-renders with its `firstEnabled`
+   * default selected and the choice is silently lost — which surfaced as a bare
+   * `toBeChecked() → Received: unchecked` in CI.
+   *
+   * The primary fix for the common cause lives in OffcanvasDecisionComponent.openDecisionDrawer()
+   * (no more redundant re-open). This is the safety net for a replacement arriving from any other
+   * source: re-select once, then assert. If the second attempt also fails to stick the assertion
+   * fails loudly — it never proceeds to submit a verdict it could not confirm.
+   *
+   * Also consolidates what were four copy-pasted select-and-assert blocks.
+   */
+  private async selectVerdictRadio(input: Locator, label: string): Promise<void> {
+    await expect(input).toBeEnabled({ timeout: 15000 });
+    await input.check();
+
+    if (!await input.isChecked().catch(() => false)) {
+      console.log(`[verdict] ${label} radio did not stick (drawer DOM likely re-rendered) — re-selecting...`);
+      await expect(input).toBeEnabled({ timeout: 10000 });
+      await input.check();
+    }
+
+    await expect(
+      input,
+      `${label} verdict radio could not be selected — the drawer DOM is being replaced faster than the selection can be made.`,
+    ).toBeChecked({ timeout: 8000 });
+  }
+
   // ─── Revision flow ────────────────────────────────────────────────────────
 
   /**
@@ -147,9 +178,7 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         //    toBeChecked() assertion below closes that: if the wrong radio ends up checked,
         //    this fails loudly instead of silently approving.
         const revisionInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="4"]');
-        await expect(revisionInput).toBeEnabled({ timeout: 15000 });
-        await revisionInput.check();
-        await expect(revisionInput).toBeChecked();
+        await this.selectVerdictRadio(revisionInput, 'Needs revision');
 
         // 3. Wait for #RevisionNotesGroup to appear.
         //    Finding 6: this group toggles ONLY when the checked option's data-note === 'Revision'
@@ -241,9 +270,7 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         // 2. Select 'Reject' via its stable data-decision attribute — NOT label text.
         //    Same Finding 1 reasoning as the revision path above.
         const rejectInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="2"]');
-        await expect(rejectInput).toBeEnabled({ timeout: 15000 });
-        await rejectInput.check();
-        await expect(rejectInput).toBeChecked();
+        await this.selectVerdictRadio(rejectInput, 'Reject');
 
         // Finding 5: the previous "#RejectionNotesGroup, #RejectNotesGroup" block is deleted.
         // Neither ID exists in the actual drawer markup (only ConditionalNotesGroup,
@@ -520,9 +547,7 @@ export class ActivityRevisionPage extends ActivityReviewPage {
             const returnInput = drawer.locator(
               '#DecisionOptions input[name="VerdictOutcome"][value="return"]',
             );
-            await expect(returnInput).toBeEnabled({ timeout: 15000 });
-            await returnInput.check();
-            await expect(returnInput).toBeChecked();
+            await this.selectVerdictRadio(returnInput, 'Return as incomplete');
 
             // 4. Fill Revision Notes in #RevisionNotesGroup — the same notes panel
             //    that appears after selecting this verdict (confirmed via DevTools).
@@ -687,9 +712,7 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         // 3. Select 'Conditional' via its stable data-decision attribute — NOT label text.
         //    Same Finding 1 reasoning as the revision/rejection paths above.
         const conditionalInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="1"]');
-        await expect(conditionalInput).toBeEnabled({ timeout: 15000 });
-        await conditionalInput.check();
-        await expect(conditionalInput).toBeChecked();
+        await this.selectVerdictRadio(conditionalInput, 'Conditional');
 
         // 3. Fill Conditional Notes if the field appears after selecting Conditional.
         //    The field is required before #SubmitVerdictButton becomes enabled.

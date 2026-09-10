@@ -297,8 +297,45 @@ export class DocumentViewerComponent extends BasePage {
       await this.page.locator('#ta-doc-review-loading, .ta-stage-loading').first()
         .waitFor({ state: 'hidden', timeout: 50000 });
       await saveAndNextButton.waitFor({ state: 'visible', timeout: 30000 });
+
+      // Read the stage BEFORE clicking. On the final stage (Verify) `data-next-url` is empty —
+      // there is no next stage — and clicking completes the document review. The application
+      // then opens the decision drawer as its response to that click (confirmed manually, and in
+      // two independent traces the drawer goes closed → open across this click with no
+      // #ActivityVerdictButton click in between). It does NOT open on page load, and it cannot
+      // be opened from the Review or Report stages at all: #ActivityVerdictButton carries
+      // data-incomplete-steps="true" until all three stages are done, and clicking it before
+      // then only raises the "Please complete all steps (Review → Report → Verify)" warning.
+      //
+      // That is the root of the double-open: the caller then runs openDecisionDrawer(), which
+      // clicks #ActivityVerdictButton without knowing an open is already in flight. The second
+      // open makes ABP re-fetch the drawer partial and replace its DOM, wiping any radio
+      // selected immediately afterwards — observed as `toBeChecked() → unchecked` in CI, with
+      // only 0.7-0.8s between the Verify submit and the redundant click.
+      //
+      // Waiting here for the app's own open to COMPLETE makes the state deterministic: by the
+      // time openDecisionDrawer() runs, `.show` is present, its guard returns true, and no
+      // second open ever happens. This is tied to the causal event rather than to a blind
+      // timeout, so a slow runner cannot reintroduce the race.
+      const isFinalStage = await saveAndNextButton.getAttribute('data-next-url')
+        .then((v) => !v || v.trim() === '')
+        .catch(() => false);
+
       await saveAndNextButton.click({ timeout: 30000 });
       await this.waitForLoaders();
+
+      if (isFinalStage) {
+        console.log('[save-next] Final stage submitted — waiting for the app to finish opening the decision drawer...');
+        const opened = await this.page
+          .waitForFunction(() => !!document.querySelector('#activity-verdict-drawer.show'), { timeout: 15000 })
+          .then(() => true)
+          .catch(() => false);
+        console.log(
+          opened
+            ? '[save-next] Decision drawer is open — the caller can use it without re-opening.'
+            : '[save-next] Decision drawer did not open within 15s — the caller will open it itself.',
+        );
+      }
     }
   }
 

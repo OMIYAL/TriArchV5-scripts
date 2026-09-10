@@ -66,13 +66,67 @@ export class OffcanvasDecisionComponent extends BasePage {
     //  "resets to Approve" symptom seen in CI traces.
     //  (Note: backdrop is `data-bs-backdrop="false"`, so Bootstrap's outside-click
     //  dismissal mechanism never fires — an earlier comment blaming it was wrong.)
-    const alreadyOpen = await this.page.evaluate(() => {
-      const el = document.querySelector('#activity-verdict-drawer');
-      return !!(el && el.classList.contains('show'));
-    }).catch(() => false);
+    // FIX (drawer re-open race): the check below used to be a single point-in-time read of
+    // `.show`. Bootstrap adds `.show` only when the OPEN ANIMATION COMPLETES, so a drawer that
+    // is mid-open reports as closed — and we then click to "open" a drawer that is already
+    // opening. That second open makes OffcanvasManager re-fetch the partial and replace the
+    // drawer's entire DOM, wiping any radio selected moments later.
+    //
+    // This is not hypothetical: across a full CI run this guard returned true ZERO times while
+    // the open-button was clicked 39 times. Confirmed sequence (reviewer-conditional):
+    //   125.2s  Save & Next on the Verify stage  → the app starts opening the drawer
+    //   125.8s  this check → false (only 600ms in; `.show` not applied yet)
+    //   126.0s  redundant click → DOM replaced
+    //   126.5s  toBeChecked() fails — the radio was reset to the server default
+    //
+    // So: wait briefly for an in-flight open to settle before deciding. Timing is taken from
+    // traces — the auto-open had not completed at 600ms but had by 1.1s; 3s allows headroom on
+    // a slow runner. Deliberately does NOT test for a transitional class (`.showing`), which
+    // has never been observed in this application's DOM.
+    const drawerPresent = await this.page.locator('#activity-verdict-drawer').count()
+      .then((n) => n > 0)
+      .catch(() => false);
+
+    // If the element is not rendered at all, nothing can be in flight — click straight away
+    // and pay no wait. The drawer is lazily created, so this is the common first-open case.
+    const alreadyOpen = drawerPresent
+      ? await this.page
+          .waitForFunction(() => !!document.querySelector('#activity-verdict-drawer.show'), { timeout: 3000 })
+          .then(() => true)
+          .catch(() => false)
+      : false;
+
     if (alreadyOpen) {
-      console.log('Decision drawer already open (.show detected) — skipping re-open.');
+      console.log('Decision drawer already open or opening (.show settled) — skipping re-open.');
       return;
+    }
+
+    // On a document review step we never click the Submit Decision button ourselves. The
+    // application opens the drawer as its own response to the final (Verify) Save & Next, and a
+    // click on top of that in-flight open makes ABP OffcanvasManager re-fetch the drawer partial
+    // and replace its DOM — wiping the radio the caller checks moments later. So on these steps
+    // we only WAIT for the app's open.
+    //
+    // The step is detected with the same viewer selector ActivityReviewPage.isDocumentStep()
+    // already uses to decide whether to run the 3-stage pipeline at all, so this guard is true
+    // on exactly the steps that auto-open and false everywhere else (General Review, Fee,
+    // Certificate, Packaging), which still need the explicit click.
+    const onDocumentStep = await this.page
+      .locator('#ta-doc-review-viewer, #ta-plan-review-viewer, .ta-plan-review-surface__stage')
+      .first()
+      .isVisible({ timeout: 4000 })
+      .catch(() => false);
+
+    if (onDocumentStep) {
+      console.log('Document review step — waiting for the app to open the decision drawer instead of clicking Submit Decision...');
+      const appOpened = await this.page
+        .waitForFunction(() => !!document.querySelector('#activity-verdict-drawer.show'), { timeout: 30000 })
+        .then(() => true)
+        .catch(() => false);
+      if (appOpened) return;
+      // Fall through to the click path rather than throwing: if the app did not open the drawer
+      // on this step, clicking is still better than failing the test outright.
+      console.log('Drawer did not open on its own within 30s — falling back to clicking Submit Decision.');
     }
 
     const verdictBtn = this.page.locator('#ActivityVerdictButton');
