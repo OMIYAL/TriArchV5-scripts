@@ -9,9 +9,37 @@ import { DocumentUploadComponent } from '../pages/storefront/document-upload.com
 const { When, Given } = createBdd();
 
 Given('the user session is cleared', async ({ page }) => {
+  // A full teardown, in this order. Clearing cookies alone is NOT enough: it drops the
+  // application's session cookie but leaves the identity provider's own session intact, so
+  // the next actor logs in on top of a still-live IdP session for the previous actor. The
+  // server then reconciles that mismatch on the next full page load — which is how the
+  // citizen phase ended up silently logged out mid-scenario on a plain search-form GET.
+  //
+  // loginToPortal() in utils/auth.helper.ts already does this; this step did not.
+
+  // 1. Clear storage FIRST, while the page is still on the application's origin.
+  //    localStorage/sessionStorage are per-origin — clearing them after navigating to the
+  //    auth host wipes the auth origin's storage and leaves the app's untouched.
+  await page.evaluate(() => {
+    try { localStorage.clear(); } catch { /* origin may deny access */ }
+    try { sessionStorage.clear(); } catch { /* origin may deny access */ }
+  }).catch(() => { /* about:blank or cross-origin — nothing to clear */ });
+
+  // 2. End the OIDC session at the identity provider. This is the part that was missing.
+  const authUrl = process.env.AUTH_BASE_URL || '';
+  await page.goto(`${authUrl}/connect/endsession`, { waitUntil: 'domcontentloaded' })
+    .catch((e) => console.log(`[session] endsession failed or timed out — continuing: ${e.message}`));
+
+  // 3. Drop all cookies, now that the IdP has been told to end the session.
   await page.context().clearCookies();
-  await page.evaluate(() => window.localStorage.clear()).catch(() => { });
-  await page.evaluate(() => window.sessionStorage.clear()).catch(() => { });
+
+  // 4. Clear again on the auth origin so no IdP-side remnants survive.
+  await page.evaluate(() => {
+    try { localStorage.clear(); } catch { /* ignore */ }
+    try { sessionStorage.clear(); } catch { /* ignore */ }
+  }).catch(() => { /* ignore */ });
+
+  console.log('[session] Session fully cleared (storage + endsession + cookies).');
 });
 
 const searchAndSelectByTrackingNumber = async (page: any, trackingNumber: string) => {

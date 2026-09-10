@@ -35,10 +35,21 @@ When('the Reviewer navigates to the Service Requests page', async ({ page }) => 
 
 When('the Reviewer selects a Service Request which is UNDER REVIEW', async ({ page }) => {
   const requestsPage = new MyRequestsPage(page);
+  const activityPage = new ActivityReviewPage(page);
   // requireSingleReviewer=true: skip any SR assigned to more than one reviewer,
   // since the active activity step won't be available for this reviewer until
   // the other reviewer completes their parallel step first.
-  await requestsPage.selectActiveRequest(true);
+  //
+  // The predicate is a read-only probe run on the SR detail page — it navigates nowhere, so
+  // the page is left on the selected SR for the following step. Returning false makes the
+  // scanner move on to the next candidate.
+  await requestsPage.selectActiveRequest(true, false, async () => {
+    if (await activityPage.documentReviewHasFinalReport()) {
+      console.log('[stale-guard] Document review already has a final report — skipping this SR.');
+      return false;
+    }
+    return true;
+  });
 });
 
 Then('the Reviewer gets redirected to the Specific Request', async ({ page }) => {

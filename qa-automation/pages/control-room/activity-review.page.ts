@@ -52,6 +52,47 @@ export class ActivityReviewPage extends BasePage {
   async completePackaging() { await this.packaging.completePackaging(); }
 
   /**
+   * True when the SR's actionable Document Review step has ALREADY produced a final report —
+   * i.e. its wizard has moved past the Review stage and this SR is not safe to start from.
+   *
+   * Read from the SR DETAIL page, so no navigation is needed. Confirmed from the live DOM in
+   * both states:
+   *   fresh / unstarted   → the action row holds only  <a class="ta-actrow__open" title="Open">
+   *   part-processed      → it also holds              <a title="View final report"
+   *                                                       href="…/DocumentReview?…&outputId=…">
+   * The second link exists only once the Report stage has generated an output.
+   *
+   * NOTE: this is true both for an abandoned/stale step AND for a legitimate post-correction
+   * resubmission. Neither is usable by the plain reviewer scenarios, which expect a document
+   * review at its first stage and have no switchToRevisedDocument() handling. The one flow that
+   * *does* want a resubmitted SR (needs-revision phase 3) uses its own step and resets the
+   * wizard to stage=review itself, so it is unaffected by this guard.
+   */
+  async documentReviewHasFinalReport(): Promise<boolean> {
+    const lanes = this.page.locator('.ta-activity-lane');
+    const laneCount = await lanes.count().catch(() => 0);
+
+    for (let i = 0; i < laneCount; i++) {
+      const lane = lanes.nth(i);
+      const typeText = await lane.locator('.ta-actrow__type').first().textContent().catch(() => '');
+      if (!/document\s*review/i.test(typeText ?? '')) continue;
+
+      // Only the lane that is actually actionable matters — a completed earlier document
+      // review legitimately has a report and must not disqualify the SR.
+      const className = (await lane.getAttribute('class').catch(() => '')) ?? '';
+      if (!/--st-(active|pending|hold)\b/.test(className)) continue;
+
+      const reportLinks = await lane
+        .locator('a[title="View final report"], a[href*="outputId="]')
+        .count()
+        .catch(() => 0);
+      return reportLinks > 0;
+    }
+
+    return false; // no actionable document review lane — not this guard's concern
+  }
+
+  /**
    * Returns true if the current activity page has a document/plan viewer.
    * Uses a short timeout so non-doc steps skip immediately without long waits.
    */

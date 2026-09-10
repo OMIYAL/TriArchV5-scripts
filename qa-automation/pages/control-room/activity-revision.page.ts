@@ -71,6 +71,37 @@ export class ActivityRevisionPage extends ActivityReviewPage {
     return this.page.locator('#activity-verdict-drawer');
   }
 
+  /**
+   * Selects a verdict radio and confirms the selection actually stuck.
+   *
+   * ABP's OffcanvasManager replaces the drawer's entire DOM whenever the partial is re-fetched.
+   * When that lands just after a radio is checked, the server re-renders with its `firstEnabled`
+   * default selected and the choice is silently lost — which surfaced as a bare
+   * `toBeChecked() → Received: unchecked` in CI.
+   *
+   * The primary fix for the common cause lives in OffcanvasDecisionComponent.openDecisionDrawer()
+   * (no more redundant re-open). This is the safety net for a replacement arriving from any other
+   * source: re-select once, then assert. If the second attempt also fails to stick the assertion
+   * fails loudly — it never proceeds to submit a verdict it could not confirm.
+   *
+   * Also consolidates what were four copy-pasted select-and-assert blocks.
+   */
+  private async selectVerdictRadio(input: Locator, label: string): Promise<void> {
+    await expect(input).toBeEnabled({ timeout: 15000 });
+    await input.check();
+
+    if (!await input.isChecked().catch(() => false)) {
+      console.log(`[verdict] ${label} radio did not stick (drawer DOM likely re-rendered) — re-selecting...`);
+      await expect(input).toBeEnabled({ timeout: 10000 });
+      await input.check();
+    }
+
+    await expect(
+      input,
+      `${label} verdict radio could not be selected — the drawer DOM is being replaced faster than the selection can be made.`,
+    ).toBeChecked({ timeout: 8000 });
+  }
+
   // ─── Revision flow ────────────────────────────────────────────────────────
 
   /**
@@ -84,6 +115,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
     await myRequestsPage.selectActiveRequest(true, false, async () => {
       const docReviewStatus = await this.getDocumentReviewStatus();
       if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
+        return false;
+      }
+      // Stale guard: a document review that already has a final report is past the Review
+      // stage, so the fixed pipeline would over-run on it. Skip and let the scanner try the
+      // next SR. See ActivityReviewPage.documentReviewHasFinalReport().
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
         return false;
       }
       return this.processUntilFirstDocumentRevision(myRequestsPage);
@@ -140,9 +178,7 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         //    toBeChecked() assertion below closes that: if the wrong radio ends up checked,
         //    this fails loudly instead of silently approving.
         const revisionInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="4"]');
-        await expect(revisionInput).toBeEnabled({ timeout: 15000 });
-        await revisionInput.check();
-        await expect(revisionInput).toBeChecked();
+        await this.selectVerdictRadio(revisionInput, 'Needs revision');
 
         // 3. Wait for #RevisionNotesGroup to appear.
         //    Finding 6: this group toggles ONLY when the checked option's data-note === 'Revision'
@@ -162,9 +198,14 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         // 4b. Re-confirm the revision radio is still the checked option after the notes fill.
         //     The async fill() is the last DOM interaction before submitDecision() — a CI race
         //     where ABP re-renders the drawer during the fill could reset the radio to the
-        //     server-default (Approve). Catching it here produces a loud, actionable failure
-        //     rather than a silent wrong-verdict submission.
-        await expect(revisionInput).toBeChecked({ timeout: 3000 });
+        //     server-default (Approve). Bumped to 8000ms (CI traces showed 3000ms was too tight).
+        //     If still unchecked after the timeout, re-click it once before failing.
+        const revisionStillChecked = await revisionInput.isChecked({ timeout: 8000 }).catch(() => false);
+        if (!revisionStillChecked) {
+          console.log('[revision] Radio unchecked after notes fill (ABP re-render race) — re-selecting...');
+          await revisionInput.check();
+        }
+        await expect(revisionInput).toBeChecked({ timeout: 8000 });
 
         // 5. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC revision
         //    radio (not just "some radio") is still checked immediately before clicking
@@ -188,6 +229,11 @@ export class ActivityRevisionPage extends ActivityReviewPage {
     await myRequestsPage.selectActiveRequest(true, false, async () => {
       const docReviewStatus = await this.getDocumentReviewStatus();
       if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
+        return false;
+      }
+      // Stale guard — see the revision flow above.
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
         return false;
       }
       return this.processUntilFirstDocumentRejection(myRequestsPage);
@@ -224,9 +270,7 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         // 2. Select 'Reject' via its stable data-decision attribute — NOT label text.
         //    Same Finding 1 reasoning as the revision path above.
         const rejectInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="2"]');
-        await expect(rejectInput).toBeEnabled({ timeout: 15000 });
-        await rejectInput.check();
-        await expect(rejectInput).toBeChecked();
+        await this.selectVerdictRadio(rejectInput, 'Reject');
 
         // Finding 5: the previous "#RejectionNotesGroup, #RejectNotesGroup" block is deleted.
         // Neither ID exists in the actual drawer markup (only ConditionalNotesGroup,
@@ -413,6 +457,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
       if (generalReviewStatus === 'not-found' || generalReviewStatus === 'done') {
         return false;
       }
+      // Stale guard: this flow targets a General Review step, but its loop also processes any
+      // Document Review step it meets on the way (see the isDocumentStep() branch below). A
+      // part-processed one would over-run the pipeline there just the same, so skip the SR.
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
+        return false;
+      }
       return this.processUntilFirstGeneralReviewReturnAsIncomplete(myRequestsPage);
     });
   }
@@ -496,9 +547,7 @@ export class ActivityRevisionPage extends ActivityReviewPage {
             const returnInput = drawer.locator(
               '#DecisionOptions input[name="VerdictOutcome"][value="return"]',
             );
-            await expect(returnInput).toBeEnabled({ timeout: 15000 });
-            await returnInput.check();
-            await expect(returnInput).toBeChecked();
+            await this.selectVerdictRadio(returnInput, 'Return as incomplete');
 
             // 4. Fill Revision Notes in #RevisionNotesGroup — the same notes panel
             //    that appears after selecting this verdict (confirmed via DevTools).
@@ -513,7 +562,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
             // 4b. Re-confirm the return radio is still checked after the notes fill.
             //     Same reasoning as the revision path: the async fill() introduces a race window
             //     where ABP could re-render the drawer and reset the radio to Approve.
-            await expect(returnInput).toBeChecked({ timeout: 3000 });
+            //     Bumped to 8000ms; re-click recovery if ABP reset it.
+            const returnStillChecked = await returnInput.isChecked({ timeout: 8000 }).catch(() => false);
+            if (!returnStillChecked) {
+              console.log('[rai] Return radio unchecked after notes fill (ABP re-render race) — re-selecting...');
+              await returnInput.check();
+            }
+            await expect(returnInput).toBeChecked({ timeout: 8000 });
 
             // 5. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC
             //    return-as-incomplete radio is still checked immediately before clicking Submit.
@@ -607,6 +662,11 @@ export class ActivityRevisionPage extends ActivityReviewPage {
       if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
         return false; // Skip — no pending doc step here
       }
+      // Stale guard — see the revision flow above.
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
+        return false;
+      }
       return this.processAllWithConditionalDocStep(myRequestsPage);
     });
   }
@@ -652,9 +712,7 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         // 3. Select 'Conditional' via its stable data-decision attribute — NOT label text.
         //    Same Finding 1 reasoning as the revision/rejection paths above.
         const conditionalInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="1"]');
-        await expect(conditionalInput).toBeEnabled({ timeout: 15000 });
-        await conditionalInput.check();
-        await expect(conditionalInput).toBeChecked();
+        await this.selectVerdictRadio(conditionalInput, 'Conditional');
 
         // 3. Fill Conditional Notes if the field appears after selecting Conditional.
         //    The field is required before #SubmitVerdictButton becomes enabled.
@@ -671,7 +729,13 @@ export class ActivityRevisionPage extends ActivityReviewPage {
         // 3b. Re-confirm the conditional radio is still checked after the notes fill.
         //     The async fill() is the last DOM interaction before submitDecision() and introduces
         //     a race window where ABP could re-render the drawer and reset the radio to Approve.
-        await expect(conditionalInput).toBeChecked({ timeout: 3000 });
+        //     Bumped to 8000ms; re-click recovery if ABP reset it.
+        const conditionalStillChecked = await conditionalInput.isChecked({ timeout: 8000 }).catch(() => false);
+        if (!conditionalStillChecked) {
+          console.log('[conditional] Conditional radio unchecked after notes fill (ABP re-render race) — re-selecting...');
+          await conditionalInput.check();
+        }
+        await expect(conditionalInput).toBeChecked({ timeout: 8000 });
 
         // 4. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC conditional
         //    radio (data-decision="1") is still checked immediately before clicking #SubmitVerdictButton.
