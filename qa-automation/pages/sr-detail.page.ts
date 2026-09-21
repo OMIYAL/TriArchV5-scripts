@@ -24,42 +24,19 @@ export class SRDetailPage extends BasePage {
     await expect(link).toBeVisible();
     await link.click();
 
-    // Wait for either offcanvas OR dialog (Bootstrap modal) to appear.
-    await this.page.waitForFunction(
-      () => !!document.querySelector('#ta-sr-status-history-panel.show, .offcanvas.show, dialog[open], [role="dialog"]'),
-      { timeout: 15000 },
-    ).catch(() => console.warn('viewStatusHistory: panel/dialog not detected within 15s — proceeding.'));
+    // Bootstrap's Offcanvas.show() sets .showing immediately but only adds .show once the
+    // slide-in transition ends, so anchoring on .show (not just role="dialog") avoids racing
+    // the animation.
+    const panel = this.page.locator('#ta-sr-status-history-panel');
+    await expect(panel).toHaveClass(/\bshow\b/, { timeout: 15000 });
 
-    // Heading is inside an <h5> in a dialog — locate it within the dialog/offcanvas container.
-    // `level` option is not available in Playwright 1.40, so we scope with a CSS ancestor instead.
-    const heading = this.page.locator('dialog h5, .offcanvas h5').filter({ hasText: 'Status timeline' }).first();
-    await expect(heading).toBeVisible({ timeout: 15000 });
+    // This panel renders with aria-hidden="true" the entire time it is open , which makes
+    // any getByRole/getByText/getByLabel query inside it match nothing. CSS locators bypass
+    // the accessibility tree entirely, so they still work here.
+    await expect(this.page.locator('#ta-sr-status-history-panel-title')).toBeVisible();
 
-    // Target the close button across both offcanvas and dialog variants.
-    const closeBtn = this.page.locator(
-      [
-        'dialog .btn-close',
-        '#ta-sr-status-history-panel .btn-close',
-        '.offcanvas.show .btn-close',
-        'button[data-bs-dismiss="offcanvas"]',
-      ].join(', ')
-    ).first();
-
-    if (await closeBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await closeBtn.click();
-    } else {
-      const closeByLabel = this.page.getByRole('button', { name: /^Close$/i }).first();
-      if (await closeByLabel.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await closeByLabel.click();
-      } else {
-        await this.page.keyboard.press('Escape');
-      }
-    }
-
-    // Confirm panel is gone before proceeding.
-    await heading.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => {
-      console.warn('viewStatusHistory: heading still visible after close attempt.');
-    });
+    await panel.locator('.btn-close').click();
+    await expect(panel).not.toHaveClass(/\bshow\b/, { timeout: 8000 });
   }
 
   /** Clicks a named tab on the SR detail page. Tries role="tab" first, falls back to text match. */
