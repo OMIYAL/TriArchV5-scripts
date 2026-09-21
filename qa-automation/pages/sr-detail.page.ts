@@ -24,22 +24,25 @@ export class SRDetailPage extends BasePage {
     await expect(link).toBeVisible();
     await link.click();
 
-    const heading = this.page.getByRole('heading', { name: 'Status timeline' });
-    await expect(heading).toBeVisible({ timeout: 10000 });
-
-    // Wait for the offcanvas open animation — .show on the panel is the real completion
-    // signal (same pattern as verdict drawer). A fixed sleep is simultaneously too slow
-    // locally and too fast on a loaded CI runner.
+    // Wait for either offcanvas OR dialog (Bootstrap modal) to appear.
     await this.page.waitForFunction(
-      () => !!document.querySelector('#ta-sr-status-history-panel.show, .offcanvas.show'),
-      { timeout: 10000 },
-    ).catch(() => console.warn('viewStatusHistory: .offcanvas.show not detected within 10s — proceeding.'));
+      () => !!document.querySelector('#ta-sr-status-history-panel.show, .offcanvas.show, dialog[open], [role="dialog"]'),
+      { timeout: 15000 },
+    ).catch(() => console.warn('viewStatusHistory: panel/dialog not detected within 15s — proceeding.'));
 
-    // Target the exact offcanvas close button visible in the DOM:
-    // <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
-    // inside #ta-sr-status-history-panel / .offcanvas.show
+    // Heading is inside an <h5> in a dialog — locate it within the dialog/offcanvas container.
+    // `level` option is not available in Playwright 1.40, so we scope with a CSS ancestor instead.
+    const heading = this.page.locator('dialog h5, .offcanvas h5').filter({ hasText: 'Status timeline' }).first();
+    await expect(heading).toBeVisible({ timeout: 15000 });
+
+    // Target the close button across both offcanvas and dialog variants.
     const closeBtn = this.page.locator(
-      '#ta-sr-status-history-panel .btn-close, .offcanvas.show .btn-close, button[data-bs-dismiss="offcanvas"]'
+      [
+        'dialog .btn-close',
+        '#ta-sr-status-history-panel .btn-close',
+        '.offcanvas.show .btn-close',
+        'button[data-bs-dismiss="offcanvas"]',
+      ].join(', ')
     ).first();
 
     if (await closeBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
@@ -53,11 +56,10 @@ export class SRDetailPage extends BasePage {
       }
     }
 
-    // Confirm panel is gone and allow closing animation to settle before proceeding
+    // Confirm panel is gone before proceeding.
     await heading.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => {
-      console.warn('viewStatusHistory: sidebar heading still visible after close attempt.');
+      console.warn('viewStatusHistory: heading still visible after close attempt.');
     });
-    // heading.waitFor({ state: 'hidden' }) is the real completion signal — no additional sleep needed.
   }
 
   /** Clicks a named tab on the SR detail page. Tries role="tab" first, falls back to text match. */
