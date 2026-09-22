@@ -24,40 +24,19 @@ export class SRDetailPage extends BasePage {
     await expect(link).toBeVisible();
     await link.click();
 
-    const heading = this.page.getByRole('heading', { name: 'Status timeline' });
-    await expect(heading).toBeVisible({ timeout: 10000 });
+    // Bootstrap's Offcanvas.show() sets .showing immediately but only adds .show once the
+    // slide-in transition ends, so anchoring on .show (not just role="dialog") avoids racing
+    // the animation.
+    const panel = this.page.locator('#ta-sr-status-history-panel');
+    await expect(panel).toHaveClass(/\bshow\b/, { timeout: 15000 });
 
-    // Wait for the offcanvas open animation — .show on the panel is the real completion
-    // signal (same pattern as verdict drawer). A fixed sleep is simultaneously too slow
-    // locally and too fast on a loaded CI runner.
-    await this.page.waitForFunction(
-      () => !!document.querySelector('#ta-sr-status-history-panel.show, .offcanvas.show'),
-      { timeout: 10000 },
-    ).catch(() => console.warn('viewStatusHistory: .offcanvas.show not detected within 10s — proceeding.'));
+    // This panel renders with aria-hidden="true" the entire time it is open , which makes
+    // any getByRole/getByText/getByLabel query inside it match nothing. CSS locators bypass
+    // the accessibility tree entirely, so they still work here.
+    await expect(this.page.locator('#ta-sr-status-history-panel-title')).toBeVisible();
 
-    // Target the exact offcanvas close button visible in the DOM:
-    // <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
-    // inside #ta-sr-status-history-panel / .offcanvas.show
-    const closeBtn = this.page.locator(
-      '#ta-sr-status-history-panel .btn-close, .offcanvas.show .btn-close, button[data-bs-dismiss="offcanvas"]'
-    ).first();
-
-    if (await closeBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await closeBtn.click();
-    } else {
-      const closeByLabel = this.page.getByRole('button', { name: /^Close$/i }).first();
-      if (await closeByLabel.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await closeByLabel.click();
-      } else {
-        await this.page.keyboard.press('Escape');
-      }
-    }
-
-    // Confirm panel is gone and allow closing animation to settle before proceeding
-    await heading.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => {
-      console.warn('viewStatusHistory: sidebar heading still visible after close attempt.');
-    });
-    // heading.waitFor({ state: 'hidden' }) is the real completion signal — no additional sleep needed.
+    await panel.locator('.btn-close').click();
+    await expect(panel).not.toHaveClass(/\bshow\b/, { timeout: 8000 });
   }
 
   /** Clicks a named tab on the SR detail page. Tries role="tab" first, falls back to text match. */
