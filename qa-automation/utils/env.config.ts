@@ -70,6 +70,10 @@ const ENV_SPECIFIC_KEYS = [
   'STRIPE_TEST_CARDHOLDER_NAME',
   'STRIPE_TEST_ZIP',
   'STRIPE_TEST_PHONE',       // pages/stripe-checkout.page.ts:63
+  // BuildRoom (estimation pipeline): its own tenant and login. 
+  'BUILDROOM_BASE_URL',
+  'BUILDROOM_USERNAME',
+  'BUILDROOM_PASSWORD',
 ] as const;
 
 // ── Blank-aware helper ───────────────────────────────────────────────────────

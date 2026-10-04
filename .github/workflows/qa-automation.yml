@@ -26,7 +26,8 @@ on:
           - storefront     # storefront-chromium project
           - control-room   # portal-auth-setup project (control-room features)
           - e2e            # e2e-full-flow project (grand workflow)
-          - all            # every project, every scenario
+          - buildroom      # buildroom-chromium project (BuildRoom features)
+          - all           # every project, every scenario
           - custom         # use the `grep` input below
       grep:
         description: "Extra tag/title filter, e.g. '@status|@contact' (required when suite=custom)"
@@ -110,6 +111,11 @@ jobs:
       REVIEWER2_USERNAME: ${{ secrets.REVIEWER2_USERNAME }}
       REVIEWER2_PASSWORD: ${{ secrets.REVIEWER2_PASSWORD }}
 
+      # ---- BuildRoom (own tenant/login; needed by the `buildroom`, `all` and `smoke` suites)
+      BUILDROOM_BASE_URL: ${{ secrets.BUILDROOM_BASE_URL || vars.BUILDROOM_BASE_URL }}
+      BUILDROOM_USERNAME: ${{ secrets.BUILDROOM_USERNAME }}
+      BUILDROOM_PASSWORD: ${{ secrets.BUILDROOM_PASSWORD }}
+
       # ---- Stripe test-mode card used at the intake-fee step
       STRIPE_TEST_CARD_NUMBER: ${{ secrets.STRIPE_TEST_CARD_NUMBER }}
       STRIPE_TEST_EXPIRATION: ${{ secrets.STRIPE_TEST_EXPIRATION }}
@@ -143,15 +149,20 @@ jobs:
             if [ -z "${!v}" ]; then echo "::warning::Not configured: $v"; fi
           done; }
 
-          need STOREFRONT_BASE_URL AUTH_BASE_URL TENANT_NAME CITIZEN_USERNAME CITIZEN_PASSWORD
+          # env.config.ts fails fast without these four, whatever the suite
+          need STOREFRONT_BASE_URL PORTAL_BASE_URL AUTH_BASE_URL TENANT_NAME
 
           case "$SUITE" in
+            buildroom)
+              need BUILDROOM_BASE_URL BUILDROOM_USERNAME BUILDROOM_PASSWORD
+              ;;
             storefront|custom)
-              warn PORTAL_BASE_URL
+              need CITIZEN_USERNAME CITIZEN_PASSWORD
+              warn PORTAL_BASE_URL BUILDROOM_BASE_URL
               ;;
             *)
-              need PORTAL_BASE_URL COORDINATOR_USERNAME COORDINATOR_PASSWORD \
-                   REVIEWER_USERNAME REVIEWER_PASSWORD
+              need CITIZEN_USERNAME CITIZEN_PASSWORD COORDINATOR_USERNAME COORDINATOR_PASSWORD \
+                   REVIEWER_USERNAME REVIEWER_PASSWORD BUILDROOM_BASE_URL BUILDROOM_USERNAME BUILDROOM_PASSWORD
               # Only the dual-reviewer scenarios need these
               warn REVIEWER1_USERNAME REVIEWER1_PASSWORD REVIEWER2_USERNAME REVIEWER2_PASSWORD
               ;;
@@ -159,7 +170,7 @@ jobs:
 
           echo "Configuration for suite '$SUITE':"
           for v in STOREFRONT_BASE_URL PORTAL_BASE_URL AUTH_BASE_URL TENANT_NAME SERVICE_NAME \
-                   CITIZEN_USERNAME COORDINATOR_USERNAME REVIEWER_USERNAME \
+                   CITIZEN_USERNAME COORDINATOR_USERNAME REVIEWER_USERNAME BUILDROOM_BASE_URL BUILDROOM_USERNAME \
                    REVIEWER1_USERNAME REVIEWER2_USERNAME STRIPE_TEST_CARD_NUMBER; do
             if [ -n "${!v}" ]; then echo "  $v = set"; else echo "  $v = (unset)"; fi
           done
@@ -223,6 +234,7 @@ jobs:
             storefront)   ARGS+=(--project=storefront-chromium) ;;
             control-room) ARGS+=(--project=portal-auth-setup) ;;
             e2e)          ARGS+=(--project=e2e-full-flow) ;;
+            buildroom)    ARGS+=(--project=buildroom-chromium) ;;
             all)          : ;;
             custom)
               if [ -z "$GREP" ]; then echo "::error::suite=custom requires the grep input"; exit 1; fi
