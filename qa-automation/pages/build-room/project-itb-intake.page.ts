@@ -22,6 +22,11 @@ export class ProjectItbIntakePage extends BuildRoomBasePage {
     this.confirmAndCreateButton = page.getByRole('button', { name: 'Confirm & create project' });
   }
 
+  /** Opens the project dashboard, where "New Project" lives. */
+  async goto(): Promise<void> {
+    await this.page.goto(`${this.baseUrl}/BuildRoom/Projects`, { waitUntil: 'domcontentloaded' });
+  }
+
   async openNewProject(): Promise<void> {
     await this.openOffcanvasPanel(this.newProjectButton, this.page.locator('#ProjectCreateRoutePanel'));
   }

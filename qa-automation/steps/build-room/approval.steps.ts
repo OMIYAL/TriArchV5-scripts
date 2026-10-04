@@ -1,7 +1,6 @@
 import { createBdd } from 'playwright-bdd';
 import { expect } from '@playwright/test';
 import { ApprovalPage } from '../../pages/build-room/approval.page';
-import { StageNavComponent } from '../../pages/build-room/components/stage-nav.component';
 import { QuoteReviewPage } from '../../pages/build-room/quote-review.page';
 import { getScenarioState } from '../../utils/scenario-state';
 
@@ -55,7 +54,7 @@ When('the Estimator signs as the primary account', async ({ page }) => {
 // A negative-only check on the Submit step's class could pass without the element being there.
 Then('the bid advances to Submit', async ({ page }) => {
   const approval = new ApprovalPage(page);
-  const submitStep = new StageNavComponent(page).step('Submit');
+  const submitStep = approval.stageStep('submit');
   await approval.waitForStage('submit', 60000);
   await expect(page.getByText('Ready to submit')).toBeVisible({ timeout: 30000 });
   await expect(submitStep).toBeVisible();

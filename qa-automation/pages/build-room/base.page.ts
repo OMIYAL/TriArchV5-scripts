@@ -1,7 +1,17 @@
-import { Page, Locator } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 import { BasePage } from '../base.page';
 
 export type ProjectStage = 'takeoff' | 'bom' | 'estimate' | 'quote' | 'approval' | 'submit';
+
+/** The stages of a launched project in workflow order, with the names shown on the stage bar. */
+export const STAGE_LABELS: Record<ProjectStage, string> = {
+  takeoff: 'Take-Off',
+  bom: 'BOM review',
+  estimate: 'Estimate',
+  quote: 'Quote review',
+  approval: 'Approval',
+  submit: 'Submit',
+};
 
 /** Base for BuildRoom pages. Extends the shared BasePage; Control Room's `waitForLoaders()` doesn't apply here. */
 export class BuildRoomBasePage extends BasePage {
@@ -19,6 +29,21 @@ export class BuildRoomBasePage extends BasePage {
   /** Waits for the app to move to a stage page. */
   async waitForStage(stage: ProjectStage, timeout = 30000): Promise<void> {
     await this.page.waitForURL(new RegExp(`LaunchPhase\\?.*stage=${stage}`), { timeout });
+  }
+
+  /** A step on the stage bar at the top of a launched project; it carries `is-complete` or `is-locked`. */
+  stageStep(stage: ProjectStage): Locator {
+    return this.page.locator('.ta-launch-stages__step', { hasText: STAGE_LABELS[stage] });
+  }
+
+  /** Every stage before `stage` is complete and every stage after it is locked. */
+  async expectWorkflowAt(stage: ProjectStage): Promise<void> {
+    const order = Object.keys(STAGE_LABELS) as ProjectStage[];
+    const at = order.indexOf(stage);
+    for (const [index, name] of order.entries()) {
+      if (index < at) await expect(this.stageStep(name), `${STAGE_LABELS[name]} should be complete`).toHaveClass(/is-complete/);
+      if (index > at) await expect(this.stageStep(name), `${STAGE_LABELS[name]} should be locked`).toHaveClass(/is-locked/);
+    }
   }
 
   /** Answers "Yes" on the confirmation dialog. */

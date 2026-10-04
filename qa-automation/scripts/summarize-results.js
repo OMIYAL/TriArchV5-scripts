@@ -45,6 +45,18 @@ const OUTCOMES = {
   skipped: { label: 'Skipped', icon: '⏭️', key: 'skipped' },
 };
 
+// Two reporting areas: BuildRoom, and Control Room for everything else (portal, storefront and
+// the citizen → portal e2e are all Control Room).
+const AREAS = [
+  { key: 'buildroom', label: 'BuildRoom', test: (p, f) => /^buildroom/.test(p) || f.includes('features/build-room/') },
+  { key: 'control-room', label: 'Control Room', test: () => true },
+];
+
+function areaOf(project, file) {
+  const f = String(file || '').replace(/\\/g, '/');
+  return AREAS.find((a) => a.test(project || '', f));
+}
+
 function cell(value) {
   return String(value == null ? '' : value).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }
@@ -96,7 +108,10 @@ function collect(suites, featurePath, rows) {
         };
         const results = test.results || [];
         const last = results[results.length - 1] || {};
+        const area = areaOf(test.projectName, spec.file || suite.file);
         rows.push({
+          area: area.key,
+          areaLabel: area.label,
           feature: nextPath.join(' › ') || path.basename(spec.file || suite.file || ''),
           scenario: spec.title,
           project: test.projectName || '',
@@ -141,6 +156,17 @@ const totals = rows.reduce(
   (acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }),
   { passed: 0, failed: 0, flaky: 0, skipped: 0, other: 0 },
 );
+const tally = (list) =>
+  list.reduce((acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }), { passed: 0, failed: 0, flaky: 0, skipped: 0, other: 0 });
+const areaStatus = (t, n) => (t.failed > 0 ? '❌ FAILED' : n === 0 ? '—' : t.flaky > 0 ? '⚠️ FLAKY' : '✅ PASSED');
+// Only areas that actually ran, in AREAS order.
+const areaKeys = AREAS.map((a) => a.key).filter((k) => rows.some((r) => r.area === k));
+const areas = areaKeys.map((key) => {
+  const list = rows.filter((r) => r.area === key);
+  const totals = tally(list);
+  return { key, label: list[0].areaLabel, list, totals, durationMs: list.reduce((s, r) => s + r.durationMs, 0), status: areaStatus(totals, list.length) };
+});
+
 const wallClock = report && report.stats && report.stats.duration
   ? report.stats.duration
   : rows.reduce((sum, r) => sum + r.durationMs, 0);
@@ -168,19 +194,29 @@ if (rows.length === 0) {
   md.push('> common causes are a `--grep` filter that matched nothing, or `bddgen` not');
   md.push('> having produced specs into `.features-gen/`.', '');
 } else {
-  md.push('### Outcome by scenario', '');
-  md.push('| Result | Feature | Scenario | Project | Tags | Duration | Retries |');
-  md.push('|---|---|---|---|---|---|---|');
-  for (const r of rows) {
-    md.push(`| ${r.icon} ${cell(r.statusLabel)} | ${cell(r.feature)} | ${cell(r.scenario)} | ${cell(r.project)} | ${cell(r.tags)} | ${duration(r.durationMs)} | ${r.retries} |`);
+  md.push('### Results by area', '');
+  md.push('| Area | Status | Passed | Failed | Flaky | Skipped | Scenarios | Duration (sum) |');
+  md.push('|---|---|---|---|---|---|---|---|');
+  for (const a of areas) {
+    md.push(`| **${cell(a.label)}** | ${a.status} | ${a.totals.passed} | ${a.totals.failed} | ${a.totals.flaky} | ${a.totals.skipped} | ${a.list.length} | ${duration(a.durationMs)} |`);
   }
   md.push('');
+
+  for (const a of areas) {
+    md.push(`### ${a.label} — ${a.status}`, '');
+    md.push('| Result | Feature | Scenario | Tags | Duration | Retries |');
+    md.push('|---|---|---|---|---|---|');
+    for (const r of a.list) {
+      md.push(`| ${r.icon} ${cell(r.statusLabel)} | ${cell(r.feature)} | ${cell(r.scenario)} | ${cell(r.tags)} | ${duration(r.durationMs)} | ${r.retries} |`);
+    }
+    md.push('');
+  }
 
   const problems = rows.filter((r) => r.status === 'failed' || r.status === 'flaky');
   if (problems.length > 0) {
     md.push('### Failure detail', '');
     for (const r of problems) {
-      md.push(`<details><summary>${r.icon} ${cell(r.scenario)} — ${cell(r.feature)}</summary>`, '');
+      md.push(`<details><summary>${r.icon} [${cell(r.areaLabel)}] ${cell(r.scenario)} — ${cell(r.feature)}</summary>`, '');
       md.push(`- **Project:** \`${cell(r.project)}\``);
       md.push(`- **Feature file:** \`${cell(r.file)}${r.line ? `:${r.line}` : ''}\``);
       md.push(`- **Attempts:** ${r.attempts}`);
@@ -196,7 +232,7 @@ fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(path.join(outDir, 'summary.md'), md.join('\n'), 'utf8');
 fs.writeFileSync(
   path.join(outDir, 'summary.json'),
-  JSON.stringify({ environment: envLabel, suite: suiteLabel, runUrl, overall, headline, totals, durationMs: wallClock, scenarios: rows }, null, 2),
+  JSON.stringify({ environment: envLabel, suite: suiteLabel, runUrl, overall, headline, totals, durationMs: wallClock, areas: areas.map(({ list, ...a }) => ({ ...a, scenarios: list.length })), scenarios: rows }, null, 2),
   'utf8',
 );
 
@@ -207,4 +243,8 @@ if (process.env.GITHUB_OUTPUT) {
   fs.appendFileSync(process.env.GITHUB_OUTPUT, `failed=${totals.failed}\n`);
   fs.appendFileSync(process.env.GITHUB_OUTPUT, `passed=${totals.passed}\n`);
   fs.appendFileSync(process.env.GITHUB_OUTPUT, `total=${rows.length}\n`);
+  for (const a of areas) {
+    const key = a.key.replace(/-/g, '_');
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `${key}_failed=${a.totals.failed}\n${key}_passed=${a.totals.passed}\n`);
+  }
 }
