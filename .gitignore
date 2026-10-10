@@ -9,7 +9,6 @@
 .env
 .env.local
 .env.*.local
-.env.example
 
 # ─── Node ────────────────────────────────────────────────────
 node_modules/
@@ -18,6 +17,7 @@ node_modules/
 # Generated on every run — large, binary, and machine-specific.
 test-results/
 playwright-report/
+.features-gen/
 
 # Individual artifact types (in case paths differ per project)
 **/*.webm
@@ -58,3 +58,7 @@ desktop.ini
 .idea/
 *.suo
 *.user
+
+# ─── CI: generated scenario report ───────────────────────────
+report/
+cucumber-report/

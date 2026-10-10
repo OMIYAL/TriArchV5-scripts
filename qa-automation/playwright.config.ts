@@ -1,9 +1,7 @@
+import './utils/env.config'; // MUST be first — resolves & injects env vars before anything else reads process.env
 import { defineConfig } from '@playwright/test';
 import { defineBddConfig } from 'playwright-bdd';
-import * as dotenv from 'dotenv';
 import path from 'path';
-
-dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const testDir = defineBddConfig({
   features: 'features/**/*.feature',
@@ -23,8 +21,8 @@ export default defineConfig({
     '**/pages/**',
     '**/fixtures/**',
   ],
-  timeout: 300000,
-  fullyParallel: false,
+  timeout: 240000,
+  fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: 1,
@@ -36,7 +34,11 @@ export default defineConfig({
 
   use: {
     actionTimeout: 15000,
-    trace: 'on-first-retry',
+    // 'retain-on-failure' rather than 'on-first-retry': retries are 0 locally (see above), so
+    // 'on-first-retry' never produced a trace on a developer machine — a local failure left only
+    // a video and an error-context file to work from, on tests that run 4-12 minutes each.
+    // Traces are written only for failures, so passing runs pay nothing.
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
 
@@ -52,7 +54,7 @@ export default defineConfig({
     viewport: null,
 
     launchOptions: {
-      args: ['--start-maximized'],
+      args: ['--start-maximized', '--window-size=1920,1080'],
     },
   },
 
@@ -62,9 +64,10 @@ export default defineConfig({
     // ═══════════════════════════════════════════════════════════════
     {
       name: 'portal-auth-setup',
-      testMatch: '**/tests/setup/**/*.setup.ts',
+      testMatch: ['**/tests/setup/**/*.setup.ts', '**/features/control-room/**/*.feature.spec.js'],
       use: {
         headless: true, // auth setup runs invisibly — no browser window shown
+        baseURL: process.env.PORTAL_BASE_URL,
       },
     },
 
@@ -100,6 +103,7 @@ export default defineConfig({
     {
       name: 'e2e-full-flow',
       testMatch: ['**/tests/e2e/**/*.spec.ts', '**/features/e2e/**/*.feature.spec.js'],
+      timeout: 720000, // 10 minutes specifically for E2E workflows
       use: {
         viewport: null,
         baseURL: process.env.STOREFRONT_BASE_URL,

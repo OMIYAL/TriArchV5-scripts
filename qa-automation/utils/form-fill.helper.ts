@@ -74,7 +74,11 @@ async function fillEmptyComboboxes(page: Page, projectData?: DynamicProjectData 
       await closeSelect2Dropdown(page);
     });
     await closeSelect2Dropdown(page);
-    await page.waitForTimeout(200);
+    // FIX: replaced fixed 200ms settle sleep with a real wait for the dropdown to be gone —
+    // closeSelect2Dropdown() already waits for it to hide internally, so this extra pause was
+    // dead time. Kept a tiny bounded fallback only in case a re-render briefly reopens it.
+    await page.locator('.select2-container--open').first()
+      .waitFor({ state: 'hidden', timeout: 5000 });
   }
 }
 
@@ -105,8 +109,11 @@ async function fillEmptyInputs(page: Page, projectData?: DynamicProjectData | nu
     if (/jurisdiction/i.test(hint) && projectData?.jurisdiction) value = projectData.jurisdiction;
 
     await field.fill(value).catch(async () => {
-      await field.click({ force: true }).catch(() => {});
-      await field.pressSequentially(value, { delay: 15 }).catch(() => {});
+      // NOTE: force kept here — this is a genuine last-resort fallback (only runs after the
+      // normal .fill() already failed), not a default. This is the correct pattern per the
+      // review: force only where a real attempt was tried first and proven necessary.
+      await field.click({ force: true });
+      await field.pressSequentially(value, { delay: 15 });
     });
   }
 }
@@ -125,7 +132,7 @@ async function fillEmptySelects(page: Page): Promise<void> {
       await select.selectOption({ index: 1 }).catch(async () => {
         const first = options.first();
         const val = await first.getAttribute('value').catch(() => null);
-        if (val) await select.selectOption(val).catch(() => {});
+        if (val) await select.selectOption(val);
       });
     }
   }

@@ -1,0 +1,758 @@
+import { Page, Locator, expect } from '@playwright/test';
+import { ActivityReviewPage } from './activity-review.page';
+import { MyRequestsPage } from '../storefront/my-requests.page';
+import { faker } from '@faker-js/faker';
+import { getScenarioState } from '../../utils/scenario-state';
+
+export class ActivityRevisionPage extends ActivityReviewPage {
+  constructor(page: Page) {
+    super(page);
+  }
+
+  // ─── Shared SR-scanning core ──────────────────────────────────────────────
+
+  /**
+   * Identifies the actual status of the Document Review lane by reading the
+   * app's own `ta-activity-lane--st-{status}` class modifier — the reliable
+   * contract (not visible badge text, which is incidental). Real observed
+   * values: approved | rejected | active | hold | pending.
+   * Returns 'done', 'pending', or 'not-found'.
+   */
+  private async getDocumentReviewStatus(): Promise<'done' | 'pending' | 'not-found'> {
+    const lanes = this.page.locator('.ta-activity-lane');
+    const laneCount = await lanes.count().catch(() => 0);
+    for (let i = 0; i < laneCount; i++) {
+      const lane = lanes.nth(i);
+      const typeText = await lane.locator('.ta-actrow__type').first().textContent().catch(() => '');
+      if (!/document\s*review/i.test(typeText ?? '')) continue;
+
+      const className = (await lane.getAttribute('class').catch(() => '')) ?? '';
+      // BP-2: 'hold' is still actionable (e.g. paused pending clarification) — treat it as
+      // pending, not done. Any other modifier (approved, rejected, …) means the step has
+      // moved past active/pending/hold and is no longer actionable for our purposes.
+      if (/--st-(active|pending|hold)\b/.test(className)) return 'pending';
+      return 'done';
+    }
+    return 'not-found';
+  }
+
+  // ─── Shared drawer-open helper ────────────────────────────────────────────
+
+  /**
+   * Opens `#activity-verdict-drawer` and returns the Locator so callers can immediately
+   * pre-select a radio, before calling `submitDecision(undefined, { preSelected: true })`.
+   *
+   * Delegates entirely to `OffcanvasDecisionComponent.openDecisionDrawer()` (via the
+   * `openVerdictDrawer()` passthrough on `ActivityReviewPage`) rather than re-implementing
+   * the open sequence. That shared implementation is required here, not optional — it's
+   * the same guard `submitDecision()` depends on:
+   *
+   * Why a redundant open (i.e. a second click while already open) is harmful:
+   *  The drawer is opened through `abp.OffcanvasManager` (Activity/Index.js:52), which
+   *  re-fetches the `ActivityVerdictDrawer` partial and **replaces the drawer's entire
+   *  DOM** on every `open()` call. Any radio checked before that fetch lands is destroyed,
+   *  and the server re-renders with `firstEnabled` checked — the "resets to Approve"
+   *  symptom. `openDecisionDrawer()`'s `alreadyOpen` guard (checks `.show` before
+   *  clicking) is what prevents that — a re-implementation here that doesn't carry the
+   *  same guard, fallback-button search, and jQuery click-handler wait would reproduce
+   *  the exact bug this method exists to avoid, the moment it's called on an already-open
+   *  drawer.
+   *
+   *  (Note: the drawer has `data-bs-backdrop="false"` so Bootstrap's outside-click
+   *  dismissal mechanism never fires — an earlier comment blaming it was incorrect.)
+   *
+   * @param context - Short label for log messages: 'revision' | 'rejection' |
+   *                  'rai' | 'conditional'.
+   * @returns The `#activity-verdict-drawer` Locator (already open).
+   */
+  private async openVerdictDrawerForPreSelection(context: string): Promise<Locator> {
+    console.log(`[openDrawer/${context}] opening via shared openDecisionDrawer()...`);
+    await this.openVerdictDrawer();
+    return this.page.locator('#activity-verdict-drawer');
+  }
+
+  /**
+   * Selects a verdict radio and confirms the selection actually stuck.
+   *
+   * ABP's OffcanvasManager replaces the drawer's entire DOM whenever the partial is re-fetched.
+   * When that lands just after a radio is checked, the server re-renders with its `firstEnabled`
+   * default selected and the choice is silently lost — which surfaced as a bare
+   * `toBeChecked() → Received: unchecked` in CI.
+   *
+   * The primary fix for the common cause lives in OffcanvasDecisionComponent.openDecisionDrawer()
+   * (no more redundant re-open). This is the safety net for a replacement arriving from any other
+   * source: re-select once, then assert. If the second attempt also fails to stick the assertion
+   * fails loudly — it never proceeds to submit a verdict it could not confirm.
+   *
+   * Also consolidates what were four copy-pasted select-and-assert blocks.
+   */
+  private async selectVerdictRadio(input: Locator, label: string): Promise<void> {
+    await expect(input).toBeEnabled({ timeout: 15000 });
+    await input.check();
+
+    if (!await input.isChecked().catch(() => false)) {
+      console.log(`[verdict] ${label} radio did not stick (drawer DOM likely re-rendered) — re-selecting...`);
+      await expect(input).toBeEnabled({ timeout: 10000 });
+      await input.check();
+    }
+
+    await expect(
+      input,
+      `${label} verdict radio could not be selected — the drawer DOM is being replaced faster than the selection can be made.`,
+    ).toBeChecked({ timeout: 8000 });
+  }
+
+  // ─── Revision flow ────────────────────────────────────────────────────────
+
+  /**
+   * Scans UNDER REVIEW SRs and for each one that has an actionable Document
+   * Review step, attempts to trigger a "Needs revision" decision on it.
+   *
+   * Uses myRequestsPage.selectActiveRequest with a predicate to pre-filter
+   * single-reviewer SRs that have a pending Document Review step.
+   */
+  async selectAndTriggerRevision(myRequestsPage: MyRequestsPage): Promise<void> {
+    await myRequestsPage.selectActiveRequest(true, false, async () => {
+      const docReviewStatus = await this.getDocumentReviewStatus();
+      if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
+        return false;
+      }
+      // Stale guard: a document review that already has a final report is past the Review
+      // stage, so the fixed pipeline would over-run on it. Skip and let the scanner try the
+      // next SR. See ActivityReviewPage.documentReviewHasFinalReport().
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
+        return false;
+      }
+      return this.processUntilFirstDocumentRevision(myRequestsPage);
+    });
+  }
+
+  /**
+   * Processes active activity steps sequentially.
+   * Approves non-document steps normally.
+   * Upon encountering the FIRST document review step, marks it for revision and stops.
+   *
+   * Returns:
+   *  true  — a Document Review step was found and marked for revision
+   *  false — all active steps were processed without hitting a Document Review step
+   *           (caller should try the next SR)
+   */
+  async processUntilFirstDocumentRevision(myRequestsPage: MyRequestsPage, maxSteps = 10): Promise<boolean> {
+    // Save tracking number from current page into scenario state if not already set.
+    // BP-1: the body-regex approach assumed a 2-letter jurisdiction code and silently skipped
+    // on any format mismatch. The detail page exposes a stable hidden input with the exact
+    // value — use that instead.
+    const trackingNumber = await this.page
+      .locator('#ServiceRequestTrackingNumber')
+      .inputValue()
+      .catch(() => '');
+    if (trackingNumber) {
+      const state = getScenarioState(this.page);
+      state.trackingNumber = trackingNumber;
+      console.log(`Saved scenario tracking number in ActivityRevisionPage: ${trackingNumber}`);
+    } else {
+      console.log('Warning: #ServiceRequestTrackingNumber not found — tracking number not saved.');
+    }
+
+    return this.processUntilFirstDocumentStep(
+      myRequestsPage,
+      maxSteps,
+      async () => {
+        // 1. Open verdict drawer — two-phase (click + waitForFunction on .show).
+        //    Rationale in openVerdictDrawerForPreSelection().
+        const drawer = await this.openVerdictDrawerForPreSelection('revision');
+
+        // 1b. Wait for the decision FORM (#DecisionOptions) to be attached before touching
+        //     any radio. The Bootstrap .show class fires when the offcanvas CONTAINER is
+        //     ready, but the form content inside is rendered by a separate JS fetch/render
+        //     cycle. On slow CI this gap can be >5s, causing toBeEnabled() to throw before
+        //     the radio even exists, which falls into the catch → goBack() → Tab 1 → Circle
+        //     error (the misleading downstream symptom the video shows).
+        await drawer.locator('#DecisionOptions').waitFor({ state: 'attached', timeout: 15000 });
+
+        // 2. Select "Needs revision" via its stable data-decision attribute — NOT label text.
+        //    Finding 1: label-text `.isVisible().catch(() => false)` with no `else` meant a
+        //    missing/disabled/drifted label silently left the app's own pre-checked default
+        //    (Approve) submitted instead, and the test still went green. The hard
+        //    toBeChecked() assertion below closes that: if the wrong radio ends up checked,
+        //    this fails loudly instead of silently approving.
+        const revisionInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="4"]');
+        await this.selectVerdictRadio(revisionInput, 'Needs revision');
+
+        // 3. Wait for #RevisionNotesGroup to appear.
+        //    Finding 6: this group toggles ONLY when the checked option's data-note === 'Revision'
+        //    — it's the app's own confirmation that the correct radio is active. Swallowing its
+        //    absence as a warning let the wrong-verdict case (Finding 1) through unnoticed; making
+        //    it a hard assertion closes that gap for the revision path specifically.
+        const revisionNotesGroup = drawer.locator('#RevisionNotesGroup');
+        await expect(revisionNotesGroup).toBeVisible({ timeout: 5000 });
+
+        // 4. Fill Revision Notes.
+        const notesInput = revisionNotesGroup.locator('textarea, input').first();
+        if (await notesInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+          console.log('Filling Revision Notes in #RevisionNotesGroup...');
+          await notesInput.fill(`Automation Revision Note: ${faker.lorem.sentence()}`);
+        }
+
+        // 4b. Re-confirm the revision radio is still the checked option after the notes fill.
+        //     The async fill() is the last DOM interaction before submitDecision() — a CI race
+        //     where ABP re-renders the drawer during the fill could reset the radio to the
+        //     server-default (Approve). Bumped to 8000ms (CI traces showed 3000ms was too tight).
+        //     If still unchecked after the timeout, re-click it once before failing.
+        const revisionStillChecked = await revisionInput.isChecked({ timeout: 8000 }).catch(() => false);
+        if (!revisionStillChecked) {
+          console.log('[revision] Radio unchecked after notes fill (ABP re-render race) — re-selecting...');
+          await revisionInput.check();
+        }
+        await expect(revisionInput).toBeChecked({ timeout: 8000 });
+
+        // 5. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC revision
+        //    radio (not just "some radio") is still checked immediately before clicking
+        //    #SubmitVerdictButton. This is the final guard against a reset-to-Approve race.
+        await this.submitDecision(undefined, { preSelected: true, verifyLocator: revisionInput });
+        console.log('First document review step marked for revision. Halting further processing.');
+      },
+    );
+  }
+
+  // ─── Rejection flow ───────────────────────────────────────────────────────
+
+  /**
+   * Scans UNDER REVIEW SRs and for each one that has an actionable Document
+   * Review step, attempts to trigger a "Reject" decision on it.
+   *
+   * Uses myRequestsPage.selectActiveRequest with a predicate to pre-filter
+   * single-reviewer SRs that have a pending Document Review step.
+   */
+  async selectAndTriggerRejection(myRequestsPage: MyRequestsPage): Promise<void> {
+    await myRequestsPage.selectActiveRequest(true, false, async () => {
+      const docReviewStatus = await this.getDocumentReviewStatus();
+      if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
+        return false;
+      }
+      // Stale guard — see the revision flow above.
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
+        return false;
+      }
+      return this.processUntilFirstDocumentRejection(myRequestsPage);
+    });
+  }
+
+  /**
+   * Processes active activity steps sequentially.
+   * Approves non-document steps normally.
+   * Upon encountering the FIRST document review step, submits a "Reject" decision and stops.
+   *
+   * Returns:
+   *  true  — a Document Review step was found and rejected
+   *  false — all active steps were processed without hitting a Document Review step
+   *           (caller should try the next SR)
+   */
+  async processUntilFirstDocumentRejection(myRequestsPage: MyRequestsPage, maxSteps = 10): Promise<boolean> {
+    return this.processUntilFirstDocumentStep(
+      myRequestsPage,
+      maxSteps,
+      async () => {
+        console.log('Document review step detected. Triggering Rejection flow...');
+
+        // 1. Open verdict drawer — two-phase (click + waitForFunction on .show).
+        //    Rationale in openVerdictDrawerForPreSelection().
+        const drawer = await this.openVerdictDrawerForPreSelection('rejection');
+
+        // 1b. Wait for #DecisionOptions to be attached before touching any radio.
+        //     Same reasoning as the revision path: .show fires on the container, but the
+        //     form content renders in a separate JS cycle. On slow CI this causes
+        //     toBeEnabled() to throw, which falls into catch → goBack() → Tab 1 → Circle error.
+        await drawer.locator('#DecisionOptions').waitFor({ state: 'attached', timeout: 15000 });
+
+        // 2. Select 'Reject' via its stable data-decision attribute — NOT label text.
+        //    Same Finding 1 reasoning as the revision path above.
+        const rejectInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="2"]');
+        await this.selectVerdictRadio(rejectInput, 'Reject');
+
+        // Finding 5: the previous "#RejectionNotesGroup, #RejectNotesGroup" block is deleted.
+        // Neither ID exists in the actual drawer markup (only ConditionalNotesGroup,
+        // RevisionNotesGroup, OnHoldReasonGroup are real) — Reject requires no notes at all.
+        // The old block cost a 3s isVisible timeout every run for coverage that never existed.
+
+        // 3. Submit — drawer is already open and Reject option already selected via data-decision.
+        //    Pass verifyLocator so submitDecision() re-asserts the SPECIFIC reject radio is still
+        //    checked immediately before clicking #SubmitVerdictButton. No notes fill on this path
+        //    so there is no additional gap between toBeChecked() above and the submit call.
+        await this.submitDecision(undefined, { preSelected: true, verifyLocator: rejectInput });
+        console.log('First document review step rejected. Halting further processing.');
+      },
+    );
+  }
+
+
+  /**
+   * Processes active activity steps in sequence.
+   * Non-document steps are approved normally (generalReview → packaging → submitDecision).
+   * On the FIRST document review step the 3-stage doc flow runs, then `onDocumentStep`
+   * is called to perform the scenario-specific decision.
+   *
+   * Always halts after the doc step — revision, rejection, and conditional all stop here;
+   * the conditional flow's Phase 2 is handled by `processActivities` in its caller.
+   * The `continueAfterDocStep` parameter has been removed: no current caller uses `true`,
+   * and the two-phase design in `processAllWithConditionalDocStep` is clearer and safer.
+   */
+  private async processUntilFirstDocumentStep(
+    myRequestsPage: MyRequestsPage,
+    maxSteps: number,
+    onDocumentStep: () => Promise<void>,
+  ): Promise<boolean> {
+    let stepsProcessed = 0;
+    let docStepHandled = false;
+
+    while (stepsProcessed < maxSteps) {
+      const hasNext = await myRequestsPage.openNextActiveActivity();
+      if (!hasNext) {
+        console.log(`No more active activities after ${stepsProcessed} step(s).`);
+        break;
+      }
+
+      let success = false;
+      let retries = 0;
+      while (!success && retries < 2) {
+        try {
+          if (await this.isDocumentStep() && !docStepHandled) {
+            // Run the 3-stage document review sequence first.
+            await this.annotateAndComment();
+            await this.clickSaveAndNext();
+            await this.reviewReport();
+            await this.clickSaveAndNext();
+            // Skip applyApprovedStamp — hand control to the caller for the verdict.
+            await this.clickSaveAndNext();
+
+            // Delegate verdict decision to the caller (revision / rejection / conditional…).
+            await onDocumentStep();
+            docStepHandled = true;
+
+            // Always halt after the doc step. Phase 2 is the caller's responsibility.
+            return true;
+          } else {
+            // FIX (Finding 7): previously this branch had no `else` — when
+            // continueAfterDocStep was true, execution fell straight through into
+            // completeGeneralReview()/completePackaging()/submitDecision() on the SAME
+            // step that onDocumentStep() had just submitted a verdict for, double-submitting
+            // a decision on one activity. Latent while the only caller used the false
+            // default, but reviewer-conditional.steps.ts now uses continueAfterDocStep=true,
+            // making this live. The guard ensures non-document processing only runs when
+            // we're not on the step we just handled.
+            console.log('Non-document step detected. Processing normally...');
+            await this.completeGeneralReview();
+            await this.completePackaging();
+            await this.submitDecision();
+            success = true;
+          }
+        } catch (e: any) {
+          retries++;
+          if (retries >= 2) throw e;
+          console.log(`Activity failed: ${e.message}. Retrying...`);
+          const closeBtn = this.page.locator('#activity-verdict-drawer .btn-close').first();
+          if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) await closeBtn.click();
+          await this.page.goBack();
+          await this.page.waitForLoadState('domcontentloaded');
+          const reopened = await myRequestsPage
+            .openNextActiveActivity({ fastFail: true })
+            .catch((navErr: any) => {
+              console.log(`Recovery navigation failed: ${navErr.message}`);
+              return false;
+            });
+          if (!reopened) throw e; // preserve the original failure
+        }
+      }
+
+      stepsProcessed++;
+      console.log(`Waiting for redirect after step ${stepsProcessed}...`);
+      const redirected = await this.page
+        .waitForURL((url) => !url.href.includes('Activity'), {
+          timeout: 30000,
+          waitUntil: 'domcontentloaded',
+        })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!redirected && this.page.url().includes('Activity')) {
+        const detailUrl = await this.page.locator('.ta-activity-shell').getAttribute('data-detail-url');
+        if (detailUrl) {
+          console.log(`Redirect stalled — navigating to detail URL: ${detailUrl}`);
+          await this.page.goto(detailUrl, { waitUntil: 'domcontentloaded' });
+        } else {
+          throw new Error(
+            `Still on Activity page after step ${stepsProcessed}; decision may not have submitted.`
+          );
+        }
+      }
+
+      await this.waitForLoaders();
+    }
+
+    // Loop ended. Returns true if a doc step was found and handled, false otherwise.
+    return docStepHandled;
+  }
+
+  // ─── General Review — Return as Incomplete (RAI) flow ────────────────────────
+
+  /**
+   * Identifies the status of the General Review lane by reading the
+   * ta-activity-lane--st-{status} class modifier — the same contract used
+   * by getDocumentReviewStatus() above.
+   * Returns 'done', 'pending', or 'not-found'.
+   */
+  private async getGeneralReviewStatus(): Promise<'done' | 'pending' | 'not-found'> {
+    const lanes = this.page.locator('.ta-activity-lane');
+    const laneCount = await lanes.count().catch(() => 0);
+    for (let i = 0; i < laneCount; i++) {
+      const lane = lanes.nth(i);
+      const typeText = await lane.locator('.ta-actrow__type').first().textContent().catch(() => '');
+      if (!/general\s*review/i.test(typeText ?? '')) continue;
+      const className = (await lane.getAttribute('class').catch(() => '')) ?? '';
+      if (/--st-(active|pending|hold)\b/.test(className)) return 'pending';
+      return 'done';
+    }
+    return 'not-found';
+  }
+
+  /**
+   * Reads the activity type of the FIRST active/pending lane on the current SR detail page.
+   * Returns the raw type text (e.g. "General review", "Document review") or an empty string.
+   *
+   * This is the authoritative detection mechanism for the RAI flow. Rather than detecting
+   * the step type AFTER navigating into the activity page (where page.title(), heading text,
+   * and button presence all proved unreliable), we read the lane type BEFORE navigating —
+   * from the SR detail page's lane list, using the exact same .ta-actrow__type selector
+   * that getDocumentReviewStatus() already uses successfully.
+   */
+  private async getNextActiveLaneType(): Promise<string> {
+    const lanes = this.page.locator('.ta-activity-lane');
+    const count = await lanes.count().catch(() => 0);
+    for (let i = 0; i < count; i++) {
+      const lane = lanes.nth(i);
+      const className = (await lane.getAttribute('class').catch(() => '')) ?? '';
+      if (!/--st-(active|pending|hold)\b/.test(className)) continue;
+      const typeText = await lane.locator('.ta-actrow__type').first().textContent().catch(() => '');
+      const type = typeText?.trim() ?? '';
+      if (type) {
+        console.log(`RAI: Next active lane type detected from detail page: "${type}"`);
+        return type;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Scans UNDER REVIEW SRs and for each one that has an actionable General Review
+   * step, triggers a "Return as incomplete" decision on it.
+   *
+   * Uses myRequestsPage.selectActiveRequest with a predicate to pre-filter
+   * single-reviewer SRs that have a pending General Review step.
+   */
+  async selectAndTriggerReturnAsIncomplete(myRequestsPage: MyRequestsPage): Promise<void> {
+    await myRequestsPage.selectActiveRequest(true, false, async () => {
+      const generalReviewStatus = await this.getGeneralReviewStatus();
+      if (generalReviewStatus === 'not-found' || generalReviewStatus === 'done') {
+        return false;
+      }
+      // Stale guard: this flow targets a General Review step, but its loop also processes any
+      // Document Review step it meets on the way (see the isDocumentStep() branch below). A
+      // part-processed one would over-run the pipeline there just the same, so skip the SR.
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
+        return false;
+      }
+      return this.processUntilFirstGeneralReviewReturnAsIncomplete(myRequestsPage);
+    });
+  }
+
+  /**
+   * Processes active activity steps sequentially.
+   * Non-General-Review steps (including Document Review steps) are approved normally.
+   * Upon encountering the FIRST General Review step:
+   *  1. Clicks "Mark All Sections Reviewed" (required before the verdict drawer is submittable).
+   *  2. Opens the verdict drawer (#ActivityVerdictButton).
+   *  3. Selects "Return as incomplete" via value="return".
+   *  4. Fills #RevisionNotesGroup notes.
+   *  5. Submits — puts the SR into "Correction Required" state.
+   *
+   * Step type detection uses getNextActiveLaneType() — reads the .ta-actrow__type text from
+   * the SR detail page BEFORE opening each activity. This is the same mechanism used by
+   * getDocumentReviewStatus() and is provably reliable. Post-navigation detection (page.title,
+   * heading text, button presence) was attempted and failed for all approaches.
+   *
+   * Returns:
+   *  true  — a General Review step was found and marked as Return as Incomplete
+   *  false — all active steps were processed without hitting a General Review step
+   */
+  async processUntilFirstGeneralReviewReturnAsIncomplete(
+    myRequestsPage: MyRequestsPage,
+    maxSteps = 10,
+  ): Promise<boolean> {
+    // Save tracking number into scenario state — needed by Phase 2 (citizen) and Phase 3 (reviewer).
+    const trackingNumber = await this.page
+      .locator('#ServiceRequestTrackingNumber')
+      .inputValue()
+      .catch(() => '');
+    if (trackingNumber) {
+      const state = getScenarioState(this.page);
+      state.trackingNumber = trackingNumber;
+      console.log(`Saved scenario tracking number in ActivityRevisionPage (RAI): ${trackingNumber}`);
+    } else {
+      console.log('Warning: #ServiceRequestTrackingNumber not found — tracking number not saved.');
+    }
+
+    let stepsProcessed = 0;
+    let generalReviewHandled = false;
+
+    while (stepsProcessed < maxSteps) {
+      // Read the next active lane type from the detail page BEFORE opening the activity.
+      // This is the reliable source of truth — the same .ta-actrow__type data used by
+      // getDocumentReviewStatus(). All post-navigation detection approaches failed.
+      const nextLaneType = await this.getNextActiveLaneType();
+      const isNextGeneralReview = /general\s*review/i.test(nextLaneType);
+
+      const hasNext = await myRequestsPage.openNextActiveActivity();
+      if (!hasNext) {
+        console.log(`No more active activities after ${stepsProcessed} step(s).`);
+        break;
+      }
+
+      let success = false;
+      let retries = 0;
+      while (!success && retries < 2) {
+        try {
+          if (isNextGeneralReview) {
+            console.log('General Review step confirmed (pre-read from detail page). Triggering Return as Incomplete flow...');
+
+            // 1. Mark all sections reviewed first — required before the verdict drawer
+            //    allows submission of non-approve decisions on General Review steps.
+            await this.completeGeneralReview();
+
+            // 2. Open verdict drawer — two-phase (click + waitForFunction on .show).
+            //    Rationale in openVerdictDrawerForPreSelection().
+            const drawer = await this.openVerdictDrawerForPreSelection('rai');
+
+            // 3. Wait for #DecisionOptions form content before touching any radio.
+            //    Same root cause as all other verdict callbacks: .show fires on the container
+            //    but the form renders in a separate JS cycle.
+            await drawer.locator('#DecisionOptions').waitFor({ state: 'attached', timeout: 15000 });
+
+            // 4. Select "Return as incomplete" via value="return".
+            //    We use value="return" rather than data-decision="4" because data-decision="4"
+            //    is also assigned to "Needs revision" on Document Review steps — targeting
+            //    by value avoids a cross-step false match and is the stable contract.
+            const returnInput = drawer.locator(
+              '#DecisionOptions input[name="VerdictOutcome"][value="return"]',
+            );
+            await this.selectVerdictRadio(returnInput, 'Return as incomplete');
+
+            // 4. Fill Revision Notes in #RevisionNotesGroup — the same notes panel
+            //    that appears after selecting this verdict (confirmed via DevTools).
+            const revisionNotesGroup = drawer.locator('#RevisionNotesGroup');
+            await expect(revisionNotesGroup).toBeVisible({ timeout: 5000 });
+            const notesInput = revisionNotesGroup.locator('textarea, input').first();
+            if (await notesInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+              console.log('Filling Revision Notes for Return as Incomplete...');
+              await notesInput.fill(`Automation Return as Incomplete Note: ${faker.lorem.sentence()}`);
+            }
+
+            // 4b. Re-confirm the return radio is still checked after the notes fill.
+            //     Same reasoning as the revision path: the async fill() introduces a race window
+            //     where ABP could re-render the drawer and reset the radio to Approve.
+            //     Bumped to 8000ms; re-click recovery if ABP reset it.
+            const returnStillChecked = await returnInput.isChecked({ timeout: 8000 }).catch(() => false);
+            if (!returnStillChecked) {
+              console.log('[rai] Return radio unchecked after notes fill (ABP re-render race) — re-selecting...');
+              await returnInput.check();
+            }
+            await expect(returnInput).toBeChecked({ timeout: 8000 });
+
+            // 5. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC
+            //    return-as-incomplete radio is still checked immediately before clicking Submit.
+            await this.submitDecision(undefined, { preSelected: true, verifyLocator: returnInput });
+            console.log('General Review step marked as Return as Incomplete. Halting further processing.');
+            return true; // submitDecision() already handled the redirect; exit immediately.
+
+          } else if (await this.isDocumentStep()) {
+            // Document Review step appearing before the General Review step — approve it normally.
+            console.log(`Non-General-Review step ("${nextLaneType || 'Document review'}") — processing document review normally.`);
+            await this.annotateAndComment();
+            await this.clickSaveAndNext();
+            await this.reviewReport();
+            await this.clickSaveAndNext();
+            await this.applyApprovedStamp();
+            await this.clickSaveAndNext();
+            await this.completeGeneralReview();
+            await this.completePackaging();
+            await this.submitDecision();
+            success = true;
+
+          } else {
+            // Any other non-doc, non-General-Review step — approve normally.
+            console.log(`Non-General-Review step ("${nextLaneType || 'unknown'}") — processing normally.`);
+            await this.completeGeneralReview();
+            await this.completePackaging();
+            await this.submitDecision();
+            success = true;
+          }
+        } catch (e: any) {
+          retries++;
+          if (retries >= 2) throw e;
+          console.log(`Activity failed: ${e.message}. Retrying...`);
+          const closeBtn = this.page.locator('#activity-verdict-drawer .btn-close').first();
+          if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) await closeBtn.click();
+          await this.page.goBack();
+          await this.page.waitForLoadState('domcontentloaded');
+          // Required: after goBack() we are on the SR detail page, not the activity page.
+          // Without this the retry immediately calls completeGeneralReview()/annotateAndComment()
+          // on the detail page, which is guaranteed to fail and points the error at the wrong step.
+          const reopened = await myRequestsPage
+            .openNextActiveActivity({ fastFail: true })
+            .catch((navErr: any) => {
+              console.log(`Recovery navigation failed: ${navErr.message}`);
+              return false;
+            });
+          if (!reopened) throw e; // preserve the original failure
+        }
+      }
+
+      stepsProcessed++;
+      console.log(`Waiting for redirect after step ${stepsProcessed}...`);
+      const redirected = await this.page
+        .waitForURL((url) => !url.href.includes('Activity'), {
+          timeout: 30000,
+          waitUntil: 'domcontentloaded',
+        })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!redirected && this.page.url().includes('Activity')) {
+        const detailUrl = await this.page.locator('.ta-activity-shell').getAttribute('data-detail-url');
+        if (detailUrl) {
+          console.log(`Redirect stalled — navigating to detail URL: ${detailUrl}`);
+          await this.page.goto(detailUrl, { waitUntil: 'domcontentloaded' });
+        } else {
+          throw new Error(
+            `Still on Activity page after step ${stepsProcessed}; decision may not have submitted.`,
+          );
+        }
+      }
+
+      await this.waitForLoaders();
+    }
+
+    return generalReviewHandled;
+  }
+
+  // ─── Conditional flow ────────────────────────────────────────────────────────
+
+  /**
+   * Scans UNDER REVIEW SRs and for each one that has an actionable Document
+   * Review step, processes all steps applying a Conditional decision on the Document Review step.
+   *
+   * The predicate returns false to skip SRs without a pending doc step, and returns
+   * phase 1's boolean so the scanner only stops when a doc step was actually handled.
+   */
+  async selectAndTriggerConditional(myRequestsPage: MyRequestsPage): Promise<void> {
+    await myRequestsPage.selectActiveRequest(true, false, async () => {
+      const docReviewStatus = await this.getDocumentReviewStatus();
+      if (docReviewStatus === 'not-found' || docReviewStatus === 'done') {
+        return false; // Skip — no pending doc step here
+      }
+      // Stale guard — see the revision flow above.
+      if (await this.documentReviewHasFinalReport()) {
+        console.log('[stale-guard] Document review already has a final report — skipping this SR.');
+        return false;
+      }
+      return this.processAllWithConditionalDocStep(myRequestsPage);
+    });
+  }
+
+  /**
+   * Processes ALL active activity steps for the current SR, applying a Conditional
+   * decision specifically on the Document Review step.
+   *
+   * Two-phase approach:
+   *  Phase 1 — processUntilFirstDocumentStep:
+   *    · Non-doc steps before the doc step are approved normally.
+   *    · The first Document Review step is conditionally approved, then the loop halts.
+   *    · Returns true if a doc step was found and handled, false if the loop exhausted
+   *      all steps without hitting a doc step.
+   *  Phase 2 — processActivities (inherited from ActivityReviewPage):
+   *    · Only runs when Phase 1 returned true (a doc step was actually found).
+   *    · Handles all remaining steps: fee waiver, packaging, issuance, etc.
+   *
+   * Returns true when Phase 1 handled a doc step (safe for the scanner predicate
+   * in selectAndTriggerConditional to use as its "stop scanning" signal).
+   */
+  async processAllWithConditionalDocStep(
+    myRequestsPage: MyRequestsPage,
+    maxSteps = 15,
+  ): Promise<boolean> {
+    // Phase 1: process steps up to and including the Document Review conditional approval.
+    const docStepHandled = await this.processUntilFirstDocumentStep(
+      myRequestsPage,
+      maxSteps,
+      async () => {
+        console.log('Document review step detected. Triggering Conditional Approval flow...');
+
+        // 1. Open verdict drawer — two-phase (click + waitForFunction on .show).
+        //    Rationale in openVerdictDrawerForPreSelection().
+        const drawer = await this.openVerdictDrawerForPreSelection('conditional');
+
+        // 2. Wait for #DecisionOptions form content before touching any radio.
+        //    Same root cause as revision/rejection: .show fires on the container but the
+        //    form renders in a separate JS cycle. Missing this wait caused toBeEnabled() to
+        //    throw → catch → goBack() → Tab 2 screenshot (the confirmed failure pattern).
+        await drawer.locator('#DecisionOptions').waitFor({ state: 'attached', timeout: 15000 });
+
+        // 3. Select 'Conditional' via its stable data-decision attribute — NOT label text.
+        //    Same Finding 1 reasoning as the revision/rejection paths above.
+        const conditionalInput = drawer.locator('#DecisionOptions input[name="VerdictOutcome"][data-decision="1"]');
+        await this.selectVerdictRadio(conditionalInput, 'Conditional');
+
+        // 3. Fill Conditional Notes if the field appears after selecting Conditional.
+        //    The field is required before #SubmitVerdictButton becomes enabled.
+        const notesGroup = drawer.locator('#ConditionalNotesGroup').first();
+        const notesInput = (await notesGroup.isVisible({ timeout: 3000 }).catch(() => false))
+          ? notesGroup.locator('textarea, input').first()
+          : drawer.locator('#Input_ConditionalNotes, textarea').first();
+
+        if (await notesInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+          console.log('Filling Conditional Notes...');
+          await notesInput.fill('Conditional approval — subject to outstanding conditions being met.');
+        }
+
+        // 3b. Re-confirm the conditional radio is still checked after the notes fill.
+        //     The async fill() is the last DOM interaction before submitDecision() and introduces
+        //     a race window where ABP could re-render the drawer and reset the radio to Approve.
+        //     Bumped to 8000ms; re-click recovery if ABP reset it.
+        const conditionalStillChecked = await conditionalInput.isChecked({ timeout: 8000 }).catch(() => false);
+        if (!conditionalStillChecked) {
+          console.log('[conditional] Conditional radio unchecked after notes fill (ABP re-render race) — re-selecting...');
+          await conditionalInput.check();
+        }
+        await expect(conditionalInput).toBeChecked({ timeout: 8000 });
+
+        // 4. Submit — pass verifyLocator so submitDecision() re-asserts the SPECIFIC conditional
+        //    radio (data-decision="1") is still checked immediately before clicking #SubmitVerdictButton.
+        //    This is the final guard against a reset-to-Approve race on slow CI runners.
+        await this.submitDecision(undefined, { preSelected: true, verifyLocator: conditionalInput });
+        console.log('Document review step conditionally approved. Handing off to processActivities...');
+      },
+    );
+
+    if (!docStepHandled) {
+      console.log('processAllWithConditionalDocStep: no Document Review step found — skipping Phase 2.');
+      return false;
+    }
+
+    // Phase 2: process all remaining steps using the same reviewer workflow logic.
+    // Only reached when Phase 1 confirmed a doc step was found and conditionally approved.
+    await this.processActivities(myRequestsPage, maxSteps);
+    return true;
+  }
+}
