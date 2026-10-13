@@ -1,4 +1,4 @@
-import { Page, Locator } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 import { BuildRoomBasePage } from './base.page';
 
 /**
@@ -13,17 +13,13 @@ export class SubmitPage extends BuildRoomBasePage {
 
   constructor(page: Page) {
     super(page);
-    this.submitBidButton = page.locator('#SubmitBidBtn');
+    this.submitBidButton = page.locator('#SubmitBidCardBtn');
     this.bidSubmittedBanner = page.locator('text=Bid submitted').first();
   }
 
   /** The attestation checkboxes have no id or name — they are identified by position. */
-  attestationBoxes(): Locator {
+  private attestationBoxes(): Locator {
     return this.page.locator('input[type="checkbox"]');
-  }
-
-  checklistProgress(): Locator {
-    return this.page.getByText(/^\d+\/\d+$/).first();
   }
 
   /** `force` because the inputs are styled custom checkboxes. */
@@ -37,6 +33,7 @@ export class SubmitPage extends BuildRoomBasePage {
 
   /** Presses Submit bid (handling a "Yes" confirm if one appears) and waits for the banner. */
   async submitBid(): Promise<void> {
+    await expect(this.submitBidButton).toBeEnabled({ timeout: 30000 });
     await this.submitBidButton.click();
     const yes = this.page.getByRole('button', { name: 'Yes', exact: true });
     if (await yes.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false)) {

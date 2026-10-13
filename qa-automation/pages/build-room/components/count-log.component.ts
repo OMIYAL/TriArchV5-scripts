@@ -30,18 +30,37 @@ export class CountLogComponent extends BuildRoomBasePage {
     return parseFloat(label) || 0;
   }
 
+  /** Label shown on the selected row, or the last row after a new add. */
+  async selectedOrLastRowLabel(): Promise<string> {
+    const selected = this.page.locator('button.ta-takeoff__count-row[aria-pressed="true"]').first();
+    if ((await selected.count()) > 0) return this.primaryLabel(selected);
+    return this.primaryLabel(this.rows.last());
+  }
+
+  /** Makes this device the active count-log row so Place on plan applies to it. */
+  async select(deviceName: string): Promise<void> {
+    const row = this.row(deviceName).first();
+    await row.waitFor({ state: 'visible', timeout: 15000 });
+    if ((await row.getAttribute('aria-pressed')) === 'true') return;
+    await row.click();
+  }
+
+  private async primaryLabel(row: Locator): Promise<string> {
+    await row.waitFor({ state: 'visible', timeout: 15000 });
+    const named = row.locator('.ta-takeoff__count-name').first();
+    if ((await named.count()) > 0) {
+      const text = (await named.innerText()).trim();
+      if (text) return text;
+    }
+    return ((await row.innerText()).split('\n').map((s) => s.trim()).find(Boolean)) ?? '';
+  }
+
   async removeAll(): Promise<void> {
     for (let guard = 0; guard < 25; guard++) {
       if ((await this.rows.count()) === 0) return;
       await this.removeRow(this.rows.first());
     }
     throw new Error('The count log still has devices after 25 removals.');
-  }
-
-  /** Removes only the named device, leaving the project's other devices alone. */
-  async removeIfPresent(deviceName: string): Promise<void> {
-    if ((await this.row(deviceName).count()) === 0) return;
-    await this.removeRow(this.row(deviceName).first());
   }
 
   /** The remove button sits under the quantity badge until the row is hovered; removal asks Yes/No. */

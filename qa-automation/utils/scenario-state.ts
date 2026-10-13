@@ -7,12 +7,8 @@ interface ScenarioState {
   targetServiceUrl: string;
   currentProjectData: DynamicProjectData | null;
   downloadedFiles: unknown[];
-  /** BuildRoom: the Estimate's direct cost just before a cost line is added. */
-  directCostBeforeLine: number | null;
-  /** BuildRoom: the Estimate's bid price, noted before the estimate is locked. */
-  estimateBid: number | null;
-  /** BuildRoom: the catalog part last opened, so a step can reopen it after the panel closes. */
-  openedPart: string | null;
+  /** BuildRoom: catalog part names picked at run time, keyed by feature alias (e.g. "@deviceA"). */
+  devices: Record<string, string>;
 }
 
 const stateMap = new WeakMap<Page, ScenarioState>();
@@ -25,10 +21,13 @@ export function getScenarioState(page: Page): ScenarioState {
       targetServiceUrl: '',
       currentProjectData: null,
       downloadedFiles: [],
-      directCostBeforeLine: null,
-      estimateBid: null,
-      openedPart: null,
+      devices: {},
     });
   }
   return stateMap.get(page)!;
+}
+
+/** "@deviceA" → name picked from this tenant's catalog; any other text is returned unchanged. */
+export function resolveDevice(page: Page, ref: string): string {
+  return getScenarioState(page).devices[ref] ?? ref;
 }

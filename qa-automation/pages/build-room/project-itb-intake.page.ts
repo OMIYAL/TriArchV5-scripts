@@ -1,5 +1,6 @@
-import { Page, Locator } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 import { BuildRoomBasePage } from './base.page';
+import { GeneralContractorPickerComponent } from './components/general-contractor-picker.component';
 
 /**
  * New project from an ITB document (`/BuildRoom/Projects` → CreateFromItb): upload, AI extraction,
@@ -40,6 +41,23 @@ export class ProjectItbIntakePage extends BuildRoomBasePage {
     await panel.locator('#ItbIntake_StartButton').click();
     // Upload + AI extraction take a couple of minutes and give no response to wait on — wait for the redirect.
     await this.page.waitForURL(/CreateFromItb\?extractionId=/, { timeout: 240000 });
+    await this.waitForExtractionReviewReady();
+  }
+
+  /** Waits until the review form shows extracted ITB data (city/AHJ resolve from this). */
+  private async waitForExtractionReviewReady(): Promise<void> {
+    const projectName = this.page.getByRole('textbox', { name: 'Project name', exact: true });
+    const addressLine = this.page.getByRole('textbox', { name: 'Address Line', exact: true });
+    await expect
+      .poll(
+        async () => {
+          const name = (await projectName.inputValue()).trim();
+          const address = (await addressLine.inputValue()).trim();
+          return name.length > 0 || address.length > 0;
+        },
+        { timeout: 120000, message: 'ITB review form should show extracted project fields' }
+      )
+      .toBe(true);
   }
 
   /** Confirms every low-confidence extracted field in one click. */
@@ -49,14 +67,11 @@ export class ProjectItbIntakePage extends BuildRoomBasePage {
     }
   }
 
-  /** Picks an existing GC company by name. */
-  async pickGeneralContractor(name: string): Promise<void> {
-    const panel = this.page.locator('#GeneralContractorPickerPanel');
-    await this.openOffcanvasPanel(this.generalContractorPickerButton, panel);
-    const gcLabel = panel.locator('label', { hasText: name }).first();
-    await gcLabel.waitFor({ state: 'visible', timeout: 20000 });
-    await gcLabel.click();
-    await panel.locator('button', { hasText: 'Select' }).click();
+  /** Opens the GC picker and selects the first or second listed company at random. */
+  async pickRandomGeneralContractor(): Promise<void> {
+    const picker = new GeneralContractorPickerComponent(this.page);
+    await this.openOffcanvasPanel(this.generalContractorPickerButton, picker.panel);
+    await picker.pickRandomFirstOrSecond();
   }
 
   /** `date` as MM/DD/YYYY, in the future. */
@@ -65,17 +80,104 @@ export class ProjectItbIntakePage extends BuildRoomBasePage {
     await this.page.getByRole('heading', { name: 'Bid & schedule' }).click(); // blur to sync
   }
 
-  async confirmAndCreate(): Promise<void> {
-    await this.confirmAndCreateButton.click();
-    await this.page.waitForURL(/Projects\/Index\?highlight=/, { timeout: 30000 });
+  /**
+   * Creates the project, then opens its detail page. The post-create redirect is `/Projects/Index`
+   * and may briefly include `?highlight=<id>` before the query is stripped — capture the id from
+   * that navigation, or fall back to the dashboard row for the extracted project name.
+   */
+  async confirmAndCreate(): Promise<string> {
+    const projectName = (
+      await this.page.getByRole('textbox', { name: 'Project name', exact: true }).inputValue()
+    ).trim();
+    await this.waitForSiteLocationFromExtraction();
+
+    let createdId = '';
+    const captureIdFromUrl = () => {
+      const url = new URL(this.page.url());
+      const highlight = url.searchParams.get('highlight');
+      if (highlight) createdId = highlight;
+      if (url.pathname.includes('/Detail')) {
+        const id = url.searchParams.get('id');
+        if (id) createdId = id;
+      }
+    };
+    const onNav = () => captureIdFromUrl();
+    this.page.on('framenavigated', onNav);
+    try {
+      await this.confirmAndCreateButton.click();
+      await this.page.waitForURL(
+        (url) =>
+          !url.pathname.includes('CreateFromItb') &&
+          (url.searchParams.has('highlight') ||
+            url.pathname.includes('/Projects/Detail') ||
+            /\/BuildRoom\/Projects(\/Index)?\/?$/.test(url.pathname)),
+        { timeout: 120000, waitUntil: 'domcontentloaded' }
+      );
+      captureIdFromUrl();
+    } finally {
+      this.page.off('framenavigated', onNav);
+    }
+
+    await this.waitForBuildRoomLoaders();
+    captureIdFromUrl();
+    if (!createdId) {
+      createdId = await this.findProjectIdOnDashboard(projectName);
+    }
+
+    await this.page.goto(`${this.baseUrl}/BuildRoom/Projects/Detail?id=${createdId}`, {
+      waitUntil: 'domcontentloaded',
+    });
+    await this.waitForBuildRoomLoaders();
+    return createdId;
   }
 
-  /** The new project's id, from the post-create redirect URL. */
-  getCreatedProjectId(): string {
-    const id = new URL(this.page.url()).searchParams.get('highlight');
+  /** Finds the new project's Detail link on the dashboard after create lands without `highlight=`. */
+  private async findProjectIdOnDashboard(projectName: string): Promise<string> {
+    const search = this.page.getByRole('textbox', { name: 'Search name, client or number' });
+    if (projectName && (await search.isVisible().catch(() => false))) {
+      await search.fill(projectName);
+    }
+    const link = this.page
+      .locator('a[href*="/BuildRoom/Projects/Detail?id="]')
+      .filter({ hasText: projectName || /./ })
+      .first();
+    await link.waitFor({ state: 'visible', timeout: 30000 });
+    const href = (await link.getAttribute('href')) ?? '';
+    const id = new URL(href, this.page.url()).searchParams.get('id');
     if (!id) {
-      throw new Error(`Expected a "highlight" query param with the new project id in ${this.page.url()}`);
+      throw new Error(`Could not read project id from dashboard link "${href}" for "${projectName}".`);
     }
     return id;
+  }
+
+  /**
+   * City and jurisdiction are filled by ITB extraction / address resolution — do not override them.
+   * Wait until either City has a value or an AHJ is selected.
+   */
+  private async waitForSiteLocationFromExtraction(): Promise<void> {
+    const cityInput = this.page.getByRole('textbox', { name: 'City', exact: true });
+    await cityInput.waitFor({ state: 'visible', timeout: 20000 });
+    await expect
+      .poll(
+        async () => {
+          const city = (await cityInput.inputValue()).trim();
+          const ahjSelected = await this.hasSelectedAhj();
+          return city.length > 0 || ahjSelected;
+        },
+        { timeout: 90000, message: 'ITB extraction should populate City or Jurisdiction · AHJ' }
+      )
+      .toBe(true);
+  }
+
+  /** True when AHJ is chosen (e.g. combobox shows "Utah", not the empty search prompt). */
+  private async hasSelectedAhj(): Promise<boolean> {
+    const siteSection = this.page.locator('div').filter({
+      has: this.page.getByRole('heading', { name: 'Site location & AHJ' }),
+    });
+    const ahjCombobox = siteSection.getByRole('combobox').last();
+    const name = ((await ahjCombobox.getAttribute('aria-label')) ?? '').trim();
+    const text = ((await ahjCombobox.innerText().catch(() => '')) ?? '').trim();
+    const combined = `${name} ${text}`;
+    return combined.length > 0 && !/Search jurisdiction by name/i.test(combined);
   }
 }
