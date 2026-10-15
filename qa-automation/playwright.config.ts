@@ -109,5 +109,18 @@ export default defineConfig({
         baseURL: process.env.STOREFRONT_BASE_URL,
       },
     },
+
+    // ═══════════════════════════════════════════════════════════════
+    // BUILDROOM (estimation pipeline — separate app area, own tenant/login)
+    // ═══════════════════════════════════════════════════════════════
+    {
+      name: 'buildroom-chromium',
+      testMatch: ['**/features/build-room/**/*.feature.spec.js'],
+      timeout: 900000,
+      use: {
+        viewport: null,
+        baseURL: process.env.BUILDROOM_BASE_URL,
+      },
+    },
   ],
 });

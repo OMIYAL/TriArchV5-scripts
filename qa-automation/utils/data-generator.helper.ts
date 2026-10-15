@@ -41,3 +41,8 @@ export function generateDynamicProjectData(): DynamicProjectData {
     sprinklerCoverage: faker.helpers.arrayElement(['None', 'Partial', 'FullNfpa13', 'FullNfpa13R', 'FullNfpa13D']),
   };
 }
+
+/** Random 1–5 sentences for the required bid decision reason field. */
+export function generateBidDecisionReason(): string {
+  return faker.lorem.sentences(faker.number.int({ min: 1, max: 5 }));
+}
