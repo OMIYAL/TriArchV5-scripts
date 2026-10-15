@@ -3,7 +3,9 @@ import { BuildRoomBasePage } from './base.page';
 
 /**
  * Approval stage (`...&stage=approval`): every current approver must sign before Submit opens.
- * `#ApprovalGateBtn` is the "Awaiting sign-off" status badge, not the Sign action.
+ * `#ApprovalGateBtn` is the "Awaiting sign-off" status badge — NOT the Sign action.
+ * The Sign action is `button.ap-sign-open-btn`; clicking it opens a "Confirm sign-off" panel
+ * containing `#ap-sign-confirm` (the final Sign button).
  */
 export class ApprovalPage extends BuildRoomBasePage {
   private readonly signButton: Locator;
@@ -18,20 +20,24 @@ export class ApprovalPage extends BuildRoomBasePage {
   }
 
   /**
-   * Signs as the logged-in account. A stale roster leaves Sign disabled and names someone who is
-   * no longer an approver; Refresh approvers replaces that roster with the current department,
-   * which includes this account. The confirm Sign is in the panel footer, below the window, so it
-   * is clicked from the page rather than with a mouse coordinate.
+   * Signs as the logged-in account. A stale roster leaves Sign disabled; Refresh approvers fixes that.
+   * The first click can be swallowed while loaders settle, hence the retry loop.
    */
   async sign(): Promise<void> {
+    await this.waitForBuildRoomLoaders();
     await this.prepareSignButton();
+
     for (let attempt = 0; attempt < 3; attempt++) {
       await this.signButton.click();
+      // #ap-sign-confirm is always attached to the DOM; we must wait for visible, not attached
       const opened = await this.signConfirmButton
-        .waitFor({ state: 'attached', timeout: 8000 })
+        .waitFor({ state: 'visible', timeout: 15000 })
         .then(() => true)
         .catch(() => false);
-      if (!opened) continue;
+      if (!opened) {
+        await this.waitForBuildRoomLoaders();
+        continue;
+      }
       await this.clickConfirmSign();
       return;
     }
@@ -39,23 +45,24 @@ export class ApprovalPage extends BuildRoomBasePage {
   }
 
   /**
-   * The confirm Sign sits in the offcanvas footer, below the window on a short viewport
-   * (`data-below-floor`). A mouse click then fails with "outside of the viewport", so scroll
-   * the panel and invoke the button's own click.
+   * Clicks the confirm Sign button inside the panel. By the time this is called the retry loop
+   * has confirmed the button is visible. scrollIntoViewIfNeeded() handles the case where the
+   * panel footer sits just below the fold; a native Playwright click then fires all framework
+   * event listeners — unlike a JS evaluate button.click() which can miss Vue/Angular bindings.
    */
   private async clickConfirmSign(): Promise<void> {
-    await this.signConfirmButton.evaluate((button: HTMLButtonElement) => {
-      const panel = button.closest('.offcanvas') as HTMLElement | null;
-      const body = panel?.querySelector('.offcanvas-body') as HTMLElement | null;
-      if (body) body.scrollTop = body.scrollHeight;
-      if (panel) panel.scrollTop = panel.scrollHeight;
-      button.scrollIntoView({ block: 'center', inline: 'nearest' });
-      button.click();
-    });
-    await this.page
-      .locator('.offcanvas.show')
-      .filter({ has: this.page.locator('#ap-sign-confirm') })
-      .waitFor({ state: 'hidden', timeout: 20000 });
+    // Dismiss any "quote edited" toast that might overlay the footer
+    const toast = this.page.getByText(/edited the quote/i);
+    if (await toast.isVisible().catch(() => false)) {
+      await toast.locator('xpath=../button').click({ timeout: 2000 }).catch(() => {});
+    }
+
+    // Scroll into view if the footer is just below the fold, then native Playwright click
+    await this.signConfirmButton.scrollIntoViewIfNeeded();
+    await this.signConfirmButton.click();
+
+    await this.waitForStage('submit', 60000);
+    await this.waitForBuildRoomLoaders();
   }
 
   /** Enables Sign. Refresh is a no-op when this account can already sign. */

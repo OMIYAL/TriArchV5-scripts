@@ -1,5 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { BuildRoomBasePage } from './base.page';
+import { BidDecisionComponent } from './components/bid-decision.component';
 
 /**
  * Project detail (`/BuildRoom/Projects/Detail`). A new project already has a default department
@@ -33,6 +34,7 @@ export class ProjectDetailPage extends BuildRoomBasePage {
       await this.waitForStage('takeoff', 180000);
       return;
     }
+    await new BidDecisionComponent(this.page).recordGoDecision();
     await this.launchPhaseButton.waitFor({ state: 'visible', timeout: 30000 });
     await expect(this.launchPhaseButton).toBeEnabled({ timeout: 30000 });
     await this.launchPhase();
