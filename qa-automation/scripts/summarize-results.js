@@ -41,8 +41,8 @@ const runUrl = args['run-url'] || '';
 const OUTCOMES = {
   expected: { label: 'Passed', icon: '✅', key: 'passed' },
   unexpected: { label: 'Failed', icon: '❌', key: 'failed' },
-  flaky: { label: 'Flaky (passed on retry)', icon: '⚠️', key: 'flaky' },
-  skipped: { label: 'Skipped', icon: '⏭️', key: 'skipped' },
+  flaky: { label: 'Flaky (passed on retry)', icon: '⚠︝', key: 'flaky' },
+  skipped: { label: 'Skipped', icon: '❭︝', key: 'skipped' },
 };
 
 // Two reporting areas: BuildRoom, and Control Room for everything else (portal, storefront and
@@ -158,7 +158,7 @@ const totals = rows.reduce(
 );
 const tally = (list) =>
   list.reduce((acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }), { passed: 0, failed: 0, flaky: 0, skipped: 0, other: 0 });
-const areaStatus = (t, n) => (t.failed > 0 ? '❌ FAILED' : n === 0 ? '—' : t.flaky > 0 ? '⚠️ FLAKY' : '✅ PASSED');
+const areaStatus = (t, n) => (t.failed > 0 ? '❌ FAILED' : n === 0 ? '—' : t.flaky > 0 ? '⚠︝ FLAKY' : '✅ PASSED');
 // Only areas that actually ran, in AREAS order.
 const areaKeys = AREAS.map((a) => a.key).filter((k) => rows.some((r) => r.area === k));
 const areas = areaKeys.map((key) => {
@@ -171,7 +171,7 @@ const wallClock = report && report.stats && report.stats.duration
   ? report.stats.duration
   : rows.reduce((sum, r) => sum + r.durationMs, 0);
 
-const overall = totals.failed > 0 ? '❌ FAILED' : rows.length === 0 ? '⚠️ NO SCENARIOS RAN' : totals.flaky > 0 ? '⚠️ PASSED WITH FLAKES' : '✅ PASSED';
+const overall = totals.failed > 0 ? '❌ FAILED' : rows.length === 0 ? '⚠︝ NO SCENARIOS RAN' : totals.flaky > 0 ? '⚠︝ PASSED WITH FLAKES' : '✅ PASSED';
 const headline = `${overall} — ${totals.passed} passed, ${totals.failed} failed, ${totals.flaky} flaky, ${totals.skipped} skipped (${rows.length} scenarios, ${duration(wallClock)})`;
 
 const md = [];
@@ -204,10 +204,10 @@ if (rows.length === 0) {
 
   for (const a of areas) {
     md.push(`### ${a.label} — ${a.status}`, '');
-    md.push('| Result | Feature | Scenario | Tags | Duration | Retries |');
-    md.push('|---|---|---|---|---|---|');
+    md.push('| Result | Feature | Scenario | Project | Tags | Duration | Retries |');
+    md.push('|---|---|---|---|---|---|---|');
     for (const r of a.list) {
-      md.push(`| ${r.icon} ${cell(r.statusLabel)} | ${cell(r.feature)} | ${cell(r.scenario)} | ${cell(r.tags)} | ${duration(r.durationMs)} | ${r.retries} |`);
+      md.push(`| ${r.icon} ${cell(r.statusLabel)} | ${cell(r.feature)} | ${cell(r.scenario)} | ${cell(r.project)} | ${cell(r.tags)} | ${duration(r.durationMs)} | ${r.retries} |`);
     }
     md.push('');
   }

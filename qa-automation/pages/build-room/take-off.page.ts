@@ -3,6 +3,9 @@ import { BuildRoomBasePage } from './base.page';
 import { CountLogComponent } from './components/count-log.component';
 import { PlanViewerComponent } from './components/plan-viewer.component';
 
+/** Catalog titles already added in this browser page. Each step builds a new page object. */
+const pickedCatalogTitles = new WeakMap<Page, string[]>();
+
 /**
  * Take-Off stage (`...&stage=takeoff`): add devices from the catalog, then place them on the plan
  * and generate the BOM.
@@ -58,12 +61,14 @@ export class TakeOffPage extends BuildRoomBasePage {
       const rowText = await row.innerText();
       if (/assembly|click to view components/i.test(rowText)) continue;
       const name = await this.rowName(row);
+      if (this.alreadyPicked(name)) continue;
       if (!this.isUsablePointDevice(name, exclude)) continue;
       await row.locator('button').first().click();
       await this.page.locator('button', { hasText: 'Add to count log' }).click();
       await this.settle();
       const logName = await this.countLog.selectedOrLastRowLabel();
       await this.countLog.select(logName);
+      this.rememberCatalogTitle(name);
       console.log(`[catalog] Added device: ${logName}`);
       return logName;
     }
@@ -140,6 +145,16 @@ export class TakeOffPage extends BuildRoomBasePage {
       if (text) return text.split('\n')[0].trim();
     }
     return ((await row.innerText()).split('\n').map((s) => s.trim()).find(Boolean)) ?? '';
+  }
+
+  private alreadyPicked(catalogTitle: string): boolean {
+    return (pickedCatalogTitles.get(this.page) ?? []).includes(catalogTitle);
+  }
+
+  private rememberCatalogTitle(catalogTitle: string): void {
+    const titles = pickedCatalogTitles.get(this.page) ?? [];
+    titles.push(catalogTitle);
+    pickedCatalogTitles.set(this.page, titles);
   }
 
   private isUsablePointDevice(name: string, exclude: string[]): boolean {

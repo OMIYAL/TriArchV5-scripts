@@ -133,13 +133,19 @@ export class ProjectItbIntakePage extends BuildRoomBasePage {
 
   /** Finds the new project's Detail link on the dashboard after create lands without `highlight=`. */
   private async findProjectIdOnDashboard(projectName: string): Promise<string> {
+    const name = projectName.trim();
+    if (!name) {
+      throw new Error(
+        'Project was created but its id was not in the URL, and the project name is empty. Refusing to open the first dashboard project.'
+      );
+    }
     const search = this.page.getByRole('textbox', { name: 'Search name, client or number' });
-    if (projectName && (await search.isVisible().catch(() => false))) {
-      await search.fill(projectName);
+    if (await search.isVisible().catch(() => false)) {
+      await search.fill(name);
     }
     const link = this.page
       .locator('a[href*="/BuildRoom/Projects/Detail?id="]')
-      .filter({ hasText: projectName || /./ })
+      .filter({ hasText: name })
       .first();
     await link.waitFor({ state: 'visible', timeout: 30000 });
     const href = (await link.getAttribute('href')) ?? '';

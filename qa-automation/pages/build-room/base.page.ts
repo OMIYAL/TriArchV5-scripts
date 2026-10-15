@@ -59,13 +59,14 @@ export class BuildRoomBasePage extends BasePage {
     await yes.click();
   }
 
-  /** Waits for the platform ABP busy overlay and `.ta-stage-loading` (e.g. "Loading plan…") to clear. */
+  /**
+   * Waits until no ABP busy overlay or `.ta-stage-loading` (e.g. "Loading plan…") is visible.
+   * A one-shot count returns before a loader that has not been inserted yet, and a hidden
+   * overlay left in the DOM must not keep this waiting.
+   */
   async waitForBuildRoomLoaders(timeout = 60000): Promise<void> {
-    const overlays = this.page.locator('.abp-block-area-busy, .ta-stage-loading');
-    const count = await overlays.count();
-    for (let i = 0; i < count; i++) {
-      await overlays.nth(i).waitFor({ state: 'hidden', timeout }).catch(() => {});
-    }
+    const busy = this.page.locator('.abp-block-area-busy:visible, .ta-stage-loading:visible');
+    await expect(busy).toHaveCount(0, { timeout });
   }
 
   /**

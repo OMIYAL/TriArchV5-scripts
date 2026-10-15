@@ -17,17 +17,22 @@ export class SubmitPage extends BuildRoomBasePage {
     this.bidSubmittedBanner = page.locator('text=Bid submitted').first();
   }
 
-  /** The attestation checkboxes have no id or name — they are identified by position. */
+  /** The four contractor attestations. `#AckPricingRisk` is a separate acknowledgement. */
   private attestationBoxes(): Locator {
-    return this.page.locator('input[type="checkbox"]');
+    return this.page.locator('input.br-sub__attest-cb');
   }
 
   /** `force` because the inputs are styled custom checkboxes. */
   async tickAllAttestations(): Promise<void> {
     const boxes = this.attestationBoxes();
+    await boxes.first().waitFor({ state: 'attached', timeout: 15000 });
     const count = await boxes.count();
     for (let i = 0; i < count; i++) {
       await boxes.nth(i).check({ force: true });
+    }
+    const pricingRisk = this.page.locator('#AckPricingRisk');
+    if ((await pricingRisk.count()) > 0) {
+      await pricingRisk.check({ force: true });
     }
   }
 

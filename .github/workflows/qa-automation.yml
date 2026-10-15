@@ -9,25 +9,38 @@ name: QA Automation (Playwright BDD)
 #   2. Nightly schedule (see `schedule` below)
 #   3. repository_dispatch from another repo (e.g. TriArchV5 after a deploy):
 #        gh api repos/OMIYAL/TriArchV5-scripts/dispatches \
-#          -f event_type=qa-run -F client_payload[suite]=smoke
+#          -f event_type=qa-run -F client_payload[suite]=smoke \
+#          -F "client_payload[tenant_type]=Agency – Enterprise"
 #
+# tenant_type chooses the room:
+#   Agency – Enterprise   -> Control Room (and storefront / e2e)
+#   Contractor-Enterprise -> Build Room
+# A manual run uses the workflow file on the branch selected under
+# "Use workflow from". Nightly has no inputs, so it stays Agency – Enterprise.
 # Required configuration -> see .github/QA_CI_SETUP.md
 # ---------------------------------------------------------------------------
 
 on:
   workflow_dispatch:
     inputs:
+      tenant_type:
+        description: "Agency – Enterprise = Control Room. Contractor-Enterprise = Build Room."
+        type: choice
+        default: "Agency – Enterprise"
+        options:
+          - "Agency – Enterprise"
+          - "Contractor-Enterprise"
       suite:
-        description: "Which scenarios to run"
+        description: "Which scenarios to run inside the selected tenant"
         type: choice
         default: smoke
         options:
-          - smoke          # every project, only @smoke scenarios
+          - smoke          # @smoke scenarios for the selected tenant
           - storefront     # storefront-chromium project
           - control-room   # portal-auth-setup project (control-room features)
           - e2e            # e2e-full-flow project (grand workflow)
           - buildroom      # buildroom-chromium project (BuildRoom features)
-          - all           # every project, every scenario
+          - all            # every scenario for the selected tenant
           - custom         # use the `grep` input below
       grep:
         description: "Extra tag/title filter, e.g. '@status|@contact' (required when suite=custom)"
@@ -57,10 +70,11 @@ on:
     # 20:30 UTC = 02:00 IST daily
     - cron: "30 20 * * *"
 
-# The suite picks up whatever Service Request happens to be UNDER REVIEW on the
-# target tenant, so two runs must never overlap on the same environment.
+# Control-room picks up whichever Service Request is UNDER REVIEW, so two runs
+# of the same tenant must never overlap. Agency – Enterprise and
+# Contractor-Enterprise use different tenants, so they lock separately.
 concurrency:
-  group: qa-automation-${{ inputs.environment || 'staging' }}
+  group: qa-automation-${{ inputs.environment || 'staging' }}-${{ inputs.tenant_type || github.event.client_payload.tenant_type || 'Agency – Enterprise' }}
   cancel-in-progress: false
 
 permissions:
@@ -68,7 +82,7 @@ permissions:
 
 jobs:
   test:
-    name: ${{ inputs.suite || github.event.client_payload.suite || 'smoke' }} @ ${{ inputs.environment || 'staging' }}
+    name: ${{ inputs.tenant_type || github.event.client_payload.tenant_type || 'Agency – Enterprise' }} / ${{ inputs.suite || github.event.client_payload.suite || 'smoke' }} @ ${{ inputs.environment || 'staging' }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     environment: ${{ inputs.environment || 'staging' }}
@@ -111,7 +125,7 @@ jobs:
       REVIEWER2_USERNAME: ${{ secrets.REVIEWER2_USERNAME }}
       REVIEWER2_PASSWORD: ${{ secrets.REVIEWER2_PASSWORD }}
 
-      # ---- BuildRoom (own tenant/login; needed by the `buildroom`, `all` and `smoke` suites)
+      # ---- Build Room (Contractor-Enterprise only; full tenant URL, own login)
       BUILDROOM_BASE_URL: ${{ secrets.BUILDROOM_BASE_URL || vars.BUILDROOM_BASE_URL }}
       BUILDROOM_USERNAME: ${{ secrets.BUILDROOM_USERNAME }}
       BUILDROOM_PASSWORD: ${{ secrets.BUILDROOM_PASSWORD }}
@@ -135,10 +149,11 @@ jobs:
       - uses: actions/checkout@v7
 
       # Checked before the installs so a missing secret costs seconds, not
-      # minutes. Only the config the selected suite actually needs is enforced:
-      # the storefront scenarios never touch the portal.
+      # minutes. Agency – Enterprise never requires Build Room secrets.
+      # Contractor-Enterprise never requires citizen/coordinator/reviewer secrets.
       - name: Verify required configuration
         env:
+          TENANT_TYPE: ${{ inputs.tenant_type || github.event.client_payload.tenant_type || 'Agency – Enterprise' }}
           SUITE: ${{ inputs.suite || github.event.client_payload.suite || 'smoke' }}
         run: |
           missing=0
@@ -152,23 +167,49 @@ jobs:
           # env.config.ts fails fast without these four, whatever the suite
           need STOREFRONT_BASE_URL PORTAL_BASE_URL AUTH_BASE_URL TENANT_NAME
 
-          case "$SUITE" in
-            buildroom)
-              need BUILDROOM_BASE_URL BUILDROOM_USERNAME BUILDROOM_PASSWORD
+          case "$TENANT_TYPE" in
+            "Agency – Enterprise")
+              case "$SUITE" in
+                buildroom)
+                  echo "::error::suite=buildroom is only valid for tenant_type=Contractor-Enterprise"
+                  missing=1
+                  ;;
+                storefront|custom)
+                  need CITIZEN_USERNAME CITIZEN_PASSWORD
+                  ;;
+                smoke|control-room|e2e|all)
+                  need CITIZEN_USERNAME CITIZEN_PASSWORD COORDINATOR_USERNAME COORDINATOR_PASSWORD \
+                       REVIEWER_USERNAME REVIEWER_PASSWORD
+                  # Only the dual-reviewer scenarios need these
+                  warn REVIEWER1_USERNAME REVIEWER1_PASSWORD REVIEWER2_USERNAME REVIEWER2_PASSWORD
+                  ;;
+                *)
+                  echo "::error::Unknown suite '$SUITE'"
+                  missing=1
+                  ;;
+              esac
               ;;
-            storefront|custom)
-              need CITIZEN_USERNAME CITIZEN_PASSWORD
-              warn PORTAL_BASE_URL BUILDROOM_BASE_URL
+            "Contractor-Enterprise")
+              need BUILDROOM_BASE_URL BUILDROOM_USERNAME BUILDROOM_PASSWORD
+              case "$SUITE" in
+                control-room|storefront|e2e)
+                  echo "::error::suite=$SUITE is only valid for tenant_type=Agency – Enterprise"
+                  missing=1
+                  ;;
+                smoke|buildroom|all|custom) ;;
+                *)
+                  echo "::error::Unknown suite '$SUITE'"
+                  missing=1
+                  ;;
+              esac
               ;;
             *)
-              need CITIZEN_USERNAME CITIZEN_PASSWORD COORDINATOR_USERNAME COORDINATOR_PASSWORD \
-                   REVIEWER_USERNAME REVIEWER_PASSWORD BUILDROOM_BASE_URL BUILDROOM_USERNAME BUILDROOM_PASSWORD
-              # Only the dual-reviewer scenarios need these
-              warn REVIEWER1_USERNAME REVIEWER1_PASSWORD REVIEWER2_USERNAME REVIEWER2_PASSWORD
+              echo "::error::Unknown tenant_type '$TENANT_TYPE'. Expected 'Agency – Enterprise' or 'Contractor-Enterprise'."
+              missing=1
               ;;
           esac
 
-          echo "Configuration for suite '$SUITE':"
+          echo "Configuration for tenant '$TENANT_TYPE', suite '$SUITE':"
           for v in STOREFRONT_BASE_URL PORTAL_BASE_URL AUTH_BASE_URL TENANT_NAME SERVICE_NAME \
                    CITIZEN_USERNAME COORDINATOR_USERNAME REVIEWER_USERNAME BUILDROOM_BASE_URL BUILDROOM_USERNAME \
                    REVIEWER1_USERNAME REVIEWER2_USERNAME STRIPE_TEST_CARD_NUMBER; do
@@ -219,6 +260,7 @@ jobs:
         # Passed through `env` rather than interpolated into the script: `grep`
         # is free-text input and must never be evaluated as shell.
         env:
+          TENANT_TYPE: ${{ inputs.tenant_type || github.event.client_payload.tenant_type || 'Agency – Enterprise' }}
           SUITE: ${{ inputs.suite || github.event.client_payload.suite || 'smoke' }}
           GREP: ${{ inputs.grep || github.event.client_payload.grep || '' }}
           RETRIES: ${{ inputs.retries || github.event.client_payload.retries || '1' }}
@@ -228,26 +270,55 @@ jobs:
         run: |
           case "$RETRIES" in 0|1|2) ;; *) echo "::error::retries must be 0, 1 or 2"; exit 1 ;; esac
 
+          # Agency rooms. Build Room is a different tenant and is never included.
+          AGENCY_PROJECTS=(--project=storefront-chromium --project=portal-auth-setup --project=e2e-full-flow)
           ARGS=()
-          case "$SUITE" in
-            smoke)        ARGS+=(--grep "@smoke") ;;
-            storefront)   ARGS+=(--project=storefront-chromium) ;;
-            control-room) ARGS+=(--project=portal-auth-setup) ;;
-            e2e)          ARGS+=(--project=e2e-full-flow) ;;
-            buildroom)    ARGS+=(--project=buildroom-chromium) ;;
-            all)          : ;;
-            custom)
-              if [ -z "$GREP" ]; then echo "::error::suite=custom requires the grep input"; exit 1; fi
+          case "$TENANT_TYPE" in
+            "Agency – Enterprise")
+              case "$SUITE" in
+                smoke)        ARGS+=(--grep "@smoke" "${AGENCY_PROJECTS[@]}") ;;
+                storefront)   ARGS+=(--project=storefront-chromium) ;;
+                control-room) ARGS+=(--project=portal-auth-setup) ;;
+                e2e)          ARGS+=(--project=e2e-full-flow) ;;
+                all)          ARGS+=("${AGENCY_PROJECTS[@]}") ;;
+                buildroom)
+                  echo "::error::suite=buildroom is only valid for tenant_type=Contractor-Enterprise"
+                  exit 1
+                  ;;
+                custom)
+                  if [ -z "$GREP" ]; then echo "::error::suite=custom requires the grep input"; exit 1; fi
+                  ARGS+=("${AGENCY_PROJECTS[@]}")
+                  ;;
+                *) echo "::error::Unknown suite '$SUITE'"; exit 1 ;;
+              esac
               ;;
-            *) echo "::error::Unknown suite '$SUITE'"; exit 1 ;;
+            "Contractor-Enterprise")
+              case "$SUITE" in
+                smoke)           ARGS+=(--project=buildroom-chromium --grep "@smoke") ;;
+                buildroom|all)   ARGS+=(--project=buildroom-chromium) ;;
+                custom)
+                  if [ -z "$GREP" ]; then echo "::error::suite=custom requires the grep input"; exit 1; fi
+                  ARGS+=(--project=buildroom-chromium)
+                  ;;
+                control-room|storefront|e2e)
+                  echo "::error::suite=$SUITE is only valid for tenant_type=Agency – Enterprise"
+                  exit 1
+                  ;;
+                *) echo "::error::Unknown suite '$SUITE'"; exit 1 ;;
+              esac
+              ;;
+            *)
+              echo "::error::Unknown tenant_type '$TENANT_TYPE'. Expected 'Agency – Enterprise' or 'Contractor-Enterprise'."
+              exit 1
+              ;;
           esac
           if [ -n "$GREP" ] && [ "$SUITE" != "smoke" ] && [ "$SUITE" != "custom" ]; then
             ARGS+=(--grep "$GREP")
           fi
           if [ "$SUITE" = "custom" ]; then ARGS+=(--grep "$GREP"); fi
 
-          echo "suite=$SUITE" >> "$GITHUB_OUTPUT"
-          echo "Running: playwright test ${ARGS[*]} --retries=$RETRIES"
+          echo "suite=${TENANT_TYPE} / ${SUITE}" >> "$GITHUB_OUTPUT"
+          echo "Running: tenant=$TENANT_TYPE suite=$SUITE playwright test ${ARGS[*]} --retries=$RETRIES"
 
           set +e
           if [ "$HEADED" = "false" ]; then

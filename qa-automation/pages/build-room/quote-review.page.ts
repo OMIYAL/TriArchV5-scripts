@@ -9,7 +9,7 @@ export class QuoteReviewPage extends BuildRoomBasePage {
 
   constructor(page: Page) {
     super(page);
-    this.sendForApprovalButton = page.locator('#QuoteSendBtn');
+    this.sendForApprovalButton = page.getByRole('button', { name: 'Send for approval', exact: true });
   }
 
   /** Advances to Approval. No-op if the app has already moved past this stage. */
@@ -21,8 +21,15 @@ export class QuoteReviewPage extends BuildRoomBasePage {
     await this.page.keyboard.press('Escape');
     await this.clickSendForApproval();
 
-    // A dirty quote refreshes on the first click and stays on this page — click once more
-    if (await this.sendForApprovalButton.isVisible().catch(() => false)) {
+    // Wait up to 60 s for the URL to reach stage=approval after the first click.
+    // A dirty quote triggers a full page refresh first and stays on stage=quote —
+    // in that case, wait for loaders to settle and send once more.
+    const reachedApproval = await this.page
+      .waitForURL(/LaunchPhase\?.*stage=approval/i, { timeout: 60000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!reachedApproval) {
       await this.waitForBuildRoomLoaders();
       await this.clickSendForApproval();
     }

@@ -61,7 +61,14 @@ export class ApprovalPage extends BuildRoomBasePage {
     await this.signConfirmButton.scrollIntoViewIfNeeded();
     await this.signConfirmButton.click();
 
-    await this.waitForStage('submit', 60000);
+    // Navigation to stage=submit can briefly invalidate the page reference — catch and verify.
+    await this.waitForStage('submit', 60000).catch(async (err: Error) => {
+      if (err.message.includes('Target page, context or browser has been closed')) {
+        await this.page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+      } else {
+        throw err;
+      }
+    });
     await this.waitForBuildRoomLoaders();
   }
 

@@ -28,5 +28,5 @@ Feature: ITB project through bidding — Estimate, Quote review, and Approval
     When the Estimator signs as the primary account
     Then the workflow is at the "Submit" stage
     When the Estimator ticks every contractor attestation
-And the Estimator submits the bid
+    And the Estimator submits the bid
     Then the bid shows as submitted
